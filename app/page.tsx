@@ -1,0 +1,287 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import type { Agent, AssistantConfig, Lead } from "@/lib/types";
+import { useAgents, useLeads, newId } from "@/lib/store";
+import { VOICES } from "@/lib/assistant-config";
+import { parseLeadsText, makeLead } from "@/lib/parse-leads";
+import { Button, Card, Badge, Checkbox, Input, Field, Textarea } from "./components/ui";
+import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX } from "./components/icons";
+import WizardModal from "./components/wizard-modal";
+
+type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
+
+export default function Dashboard() {
+  const agents = useAgents();
+  const leads = useLeads();
+  const [selAgents, setSelAgents] = useState<Set<string>>(new Set());
+  const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
+  const [wizard, setWizard] = useState<{ open: boolean; edit?: Agent }>({ open: false });
+  const [importOpen, setImportOpen] = useState(false);
+  const [tab, setTab] = useState<"agents" | "leads">("agents");
+  const [toast, setToast] = useState<Toast>(null);
+  const [calling, setCalling] = useState(false);
+
+  const showToast = (msg: string, tone: NonNullable<Toast>["tone"] = "info") => {
+    setToast({ msg, tone });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const toggle = (set: Set<string>, id: string, setter: (s: Set<string>) => void) => {
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setter(next);
+  };
+
+  async function saveAgent(config: AssistantConfig) {
+    const editing = wizard.edit;
+    const id = editing?.id ?? newId("agent");
+    const agent: Agent = { id, config, vapiId: editing?.vapiId, createdAt: editing?.createdAt ?? Date.now() };
+    if (editing) agents.update(id, { config }); else agents.add(agent);
+    setWizard({ open: false });
+    showToast(editing ? "Agent updated" : "Agent created", "success");
+    try {
+      const res = await fetch("/api/assistants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config, vapiId: editing?.vapiId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.id) agents.update(id, { vapiId: data.id });
+    } catch { /* offline / no key - stays local */ }
+  }
+
+  async function callLeads() {
+    const agent = agents.items.find((a) => selAgents.has(a.id));
+    const chosen = leads.items.filter((l) => selLeads.has(l.id));
+    if (!agent || chosen.length === 0) return;
+    if (!agent.vapiId) {
+      showToast("This agent isn't connected to Vapi yet - add VAPI_API_KEY in Vercel to place real calls.", "error");
+      return;
+    }
+    setCalling(true);
+    chosen.forEach((l) => leads.update(l.id, { status: "calling" }));
+    try {
+      const res = await fetch("/api/calls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vapiId: agent.vapiId, leads: chosen.map((l) => ({ id: l.id, phone: l.phone })) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Call failed");
+      showToast(`Calling ${chosen.length} lead${chosen.length > 1 ? "s" : ""} with ${agent.config.name}`, "success");
+    } catch (e) {
+      chosen.forEach((l) => leads.update(l.id, { status: "new" }));
+      showToast((e as Error).message, "error");
+    } finally {
+      setCalling(false);
+    }
+  }
+
+  const actionReady = selAgents.size > 0 && selLeads.size > 0;
+  const selectedAgentName = useMemo(
+    () => agents.items.find((a) => selAgents.has(a.id))?.config.name,
+    [agents.items, selAgents],
+  );
+
+  return (
+    <div className="mx-auto min-h-dvh w-full max-w-6xl px-4 pb-32 pt-5 sm:px-6">
+      <header className="mb-6 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="grid h-9 w-9 place-items-center rounded-[10px]" style={{ background: "var(--primary)", color: "#fff" }}>
+            <IconPhone width={18} height={18} />
+          </div>
+          <div>
+            <div className="text-lg font-bold tracking-tight" style={{ color: "var(--text)" }}>VoiceBuilder</div>
+            <div className="text-xs" style={{ color: "var(--text-faint)" }}>Voice AI outreach</div>
+          </div>
+        </div>
+      </header>
+
+      <div className="mb-4 flex gap-1 rounded-[10px] p-1 sm:hidden" style={{ background: "var(--surface-2)" }}>
+        {(["agents", "leads"] as const).map((t) => (
+          <button key={t} onClick={() => setTab(t)}
+            className="flex-1 rounded-[8px] py-2 text-sm font-medium capitalize transition-colors cursor-pointer"
+            style={{ background: tab === t ? "var(--surface)" : "transparent", color: tab === t ? "var(--text)" : "var(--text-muted)", boxShadow: tab === t ? "var(--shadow-sm)" : undefined }}>
+            {t} {t === "agents" ? `(${agents.items.length})` : `(${leads.items.length})`}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-5 sm:grid-cols-2">
+        <section className={tab === "agents" ? "block" : "hidden sm:block"}>
+          <PanelHeader icon={<IconBot />} title="Agents" count={agents.items.length}
+            action={<Button size="sm" onClick={() => setWizard({ open: true })}><IconPlus width={16} height={16} /> New</Button>} />
+          {agents.items.length === 0 ? (
+            <EmptyState icon={<IconBot width={26} height={26} />} title="You have no agents yet"
+              body="Create your first voice AI agent - describe how it should talk, qualify leads, and book meetings."
+              cta={<Button onClick={() => setWizard({ open: true })}><IconSparkles width={16} height={16} /> Create your first agent</Button>} />
+          ) : (
+            <div className="space-y-2.5">
+              {agents.items.map((a) => (
+                <SelectableRow key={a.id} selected={selAgents.has(a.id)} onToggle={() => toggle(selAgents, a.id, setSelAgents)}>
+                  <button className="min-w-0 flex-1 text-left cursor-pointer" onClick={() => setWizard({ open: true, edit: a })}>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
+                      {a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
+                    </div>
+                    <div className="truncate text-xs" style={{ color: "var(--text-faint)" }}>
+                      {VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions
+                    </div>
+                  </button>
+                  <IconButton label="Delete agent" onClick={() => { agents.remove(a.id); toggle(selAgents, a.id, setSelAgents); }}><IconTrash width={16} height={16} /></IconButton>
+                </SelectableRow>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className={tab === "leads" ? "block" : "hidden sm:block"}>
+          <PanelHeader icon={<IconUsers />} title="Leads" count={leads.items.length}
+            action={<Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}><IconUpload width={16} height={16} /> Import</Button>} />
+          <QuickAddLead onAdd={(name, phone) => leads.add(makeLead(name, phone))} />
+          {leads.items.length === 0 ? (
+            <div className="mt-3"><EmptyState icon={<IconUsers width={26} height={26} />} title="No leads yet"
+              body="Add a number above, or import a CSV/JSON list of leads to start calling." cta={null} /></div>
+          ) : (
+            <div className="mt-3 space-y-2.5">
+              {leads.items.map((l) => (
+                <SelectableRow key={l.id} selected={selLeads.has(l.id)} onToggle={() => toggle(selLeads, l.id, setSelLeads)}>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name}</div>
+                    <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
+                  </div>
+                  <LeadStatusBadge status={l.status} />
+                  <IconButton label="Delete lead" onClick={() => { leads.remove(l.id); toggle(selLeads, l.id, setSelLeads); }}><IconTrash width={16} height={16} /></IconButton>
+                </SelectableRow>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {actionReady && (
+        <div className="fixed inset-x-0 bottom-0 z-40 px-4 pb-4">
+          <div className="mx-auto max-w-3xl">
+            <Card className="flex items-center justify-between gap-3 px-4 py-3" style={{ boxShadow: "var(--shadow-md)", border: "1px solid var(--border-strong)" }}>
+              <div className="min-w-0 text-sm">
+                <span className="font-semibold" style={{ color: "var(--text)" }}>{selLeads.size}</span>
+                <span style={{ color: "var(--text-muted)" }}> lead{selLeads.size > 1 ? "s" : ""} · </span>
+                <span className="truncate" style={{ color: "var(--text-muted)" }}>{selectedAgentName}</span>
+              </div>
+              <Button variant="danger" onClick={callLeads} disabled={calling}>
+                <IconPhone width={16} height={16} /> {calling ? "Calling…" : `Call ${selLeads.size}`}
+              </Button>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {wizard.open && (
+        <WizardModal initial={wizard.edit?.config} onClose={() => setWizard({ open: false })} onSave={saveAgent} />
+      )}
+      {importOpen && (
+        <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />
+      )}
+      {toast && (
+        <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center px-4" aria-live="polite">
+          <div className="rounded-[10px] px-4 py-2.5 text-sm" style={{
+            background: "var(--surface)", border: `1px solid ${toast.tone === "error" ? "var(--live)" : toast.tone === "success" ? "var(--success)" : "var(--border-strong)"}`,
+            color: "var(--text)", boxShadow: "var(--shadow-md)", maxWidth: 480,
+          }}>{toast.msg}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PanelHeader({ icon, title, count, action }: { icon: React.ReactNode; title: string; count: number; action: React.ReactNode }) {
+  return (
+    <div className="mb-3 flex items-center justify-between">
+      <div className="flex items-center gap-2" style={{ color: "var(--text)" }}>
+        <span style={{ color: "var(--text-muted)" }}>{icon}</span>
+        <h2 className="font-semibold">{title}</h2>
+        <span className="rounded-full px-2 py-0.5 text-xs tabular" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>{count}</span>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function SelectableRow({ selected, onToggle, children }: { selected: boolean; onToggle: () => void; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 rounded-[12px] px-3 py-3 transition-colors duration-150"
+      style={{ background: "var(--surface)", border: `1px solid ${selected ? "var(--primary)" : "var(--border)"}`, boxShadow: "var(--shadow-sm)" }}>
+      <Checkbox checked={selected} onChange={onToggle} aria-label="Select" />
+      {children}
+    </div>
+  );
+}
+
+function IconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button aria-label={label} onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="grid h-9 w-9 flex-none place-items-center rounded-[8px] cursor-pointer transition-colors"
+      style={{ color: "var(--text-faint)" }}>{children}</button>
+  );
+}
+
+function EmptyState({ icon, title, body, cta }: { icon: React.ReactNode; title: string; body: string; cta: React.ReactNode }) {
+  return (
+    <Card className="flex flex-col items-center px-6 py-10 text-center">
+      <div className="mb-3 grid h-14 w-14 place-items-center rounded-full" style={{ background: "var(--primary-soft)", color: "var(--primary)" }}>{icon}</div>
+      <h3 className="text-sm font-semibold" style={{ color: "var(--text)" }}>{title}</h3>
+      <p className="mt-1 max-w-xs text-sm" style={{ color: "var(--text-muted)" }}>{body}</p>
+      {cta && <div className="mt-4">{cta}</div>}
+    </Card>
+  );
+}
+
+function LeadStatusBadge({ status }: { status: Lead["status"] }) {
+  if (status === "calling") return <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> calling</Badge>;
+  if (status === "qualified") return <Badge tone="primary">qualified</Badge>;
+  if (status === "booked") return <Badge tone="success">booked</Badge>;
+  if (status === "no-answer") return <Badge tone="muted">no answer</Badge>;
+  return <Badge tone="muted">new</Badge>;
+}
+
+function QuickAddLead({ onAdd }: { onAdd: (name: string, phone: string) => void }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const submit = () => { if (phone.trim()) { onAdd(name, phone); setName(""); setPhone(""); } };
+  return (
+    <div className="flex gap-2">
+      <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: "0 0 34%" }} />
+      <Input placeholder="+1 555 123 4567" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+      <Button size="sm" onClick={submit}><IconPlus width={16} height={16} /></Button>
+    </div>
+  );
+}
+
+function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (leads: Lead[]) => void }) {
+  const [text, setText] = useState("");
+  const parsed = useMemo(() => parseLeadsText(text), [text]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: "rgba(6,9,15,0.55)" }} onClick={onClose}>
+      <div className="w-full sm:max-w-lg rounded-t-[18px] sm:rounded-[16px] p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-md)" }} onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>Import leads</h2>
+          <button onClick={onClose} aria-label="Close" className="grid h-9 w-9 place-items-center rounded-full cursor-pointer" style={{ color: "var(--text-muted)" }}><IconX /></button>
+        </div>
+        <label className="mb-3 flex cursor-pointer items-center justify-center gap-2 rounded-[10px] px-4 py-3 text-sm" style={{ border: "1.5px dashed var(--border-strong)", color: "var(--text-muted)" }}>
+          <IconUpload width={16} height={16} /> Choose a .csv or .json file
+          <input type="file" accept=".csv,.json,.txt" className="hidden"
+            onChange={async (e) => { const f = e.target.files?.[0]; if (f) setText(await f.text()); }} />
+        </label>
+        <Field label="…or paste" hint="CSV (name, phone), a JSON array, or one number per line.">
+          <Textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder={"Dana, +972 50 123 4567\nGuy, +972 54 765 4321"} />
+        </Field>
+        <div className="mt-4 flex items-center justify-between">
+          <span className="text-sm" style={{ color: "var(--text-muted)" }}>{parsed.length} lead{parsed.length !== 1 ? "s" : ""} detected</span>
+          <Button onClick={() => onImport(parsed)} disabled={parsed.length === 0}>Import {parsed.length || ""}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
