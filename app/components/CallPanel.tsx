@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Vapi from "@vapi-ai/web";
 import type { Agent } from "@/lib/types";
+import { getPersona } from "@/lib/agents";
 import { Button } from "./ui";
+import AgentAvatar from "./AgentAvatar";
 import { IconPhone, IconX } from "./icons";
 
 type Line = { role: "assistant" | "user"; text: string };
@@ -60,9 +62,12 @@ export default function CallPanel({ agent, onClose }: { agent: Agent; onClose: (
         style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-md)" }}
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
-          <div>
-            <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>Test call · {agent.config.name}</h2>
-            <p className="text-xs" style={{ color: "var(--text-faint)" }}>In-browser web call</p>
+          <div className="flex min-w-0 items-center gap-3">
+            {(() => { const p = getPersona(agent.personaId ?? ""); return p ? <AgentAvatar persona={p} size={40} className="flex-none" /> : null; })()}
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-semibold" style={{ color: "var(--text)" }}>Test call · {agent.config.name}</h2>
+              <p className="text-xs" style={{ color: "var(--text-faint)" }}>In-browser web call</p>
+            </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="grid h-9 w-9 place-items-center rounded-full cursor-pointer" style={{ color: "var(--text-muted)" }}>
             <IconX />

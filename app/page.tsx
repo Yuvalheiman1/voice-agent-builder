@@ -4,9 +4,11 @@ import { useMemo, useState } from "react";
 import type { Agent, AssistantConfig, Lead } from "@/lib/types";
 import { useAgents, useLeads, newId } from "@/lib/store";
 import { VOICES } from "@/lib/assistant-config";
+import { getPersona } from "@/lib/agents";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX } from "./components/icons";
+import AgentAvatar from "./components/AgentAvatar";
 import WizardModal from "./components/wizard-modal";
 import CallPanel from "./components/CallPanel";
 
@@ -35,11 +37,11 @@ export default function Dashboard() {
     setter(next);
   };
 
-  async function saveAgent(config: AssistantConfig) {
+  async function saveAgent(config: AssistantConfig, personaId?: string) {
     const editing = wizard.edit;
     const id = editing?.id ?? newId("agent");
-    const agent: Agent = { id, config, vapiId: editing?.vapiId, createdAt: editing?.createdAt ?? Date.now() };
-    if (editing) agents.update(id, { config }); else agents.add(agent);
+    const agent: Agent = { id, config, personaId, vapiId: editing?.vapiId, createdAt: editing?.createdAt ?? Date.now() };
+    if (editing) agents.update(id, { config, personaId }); else agents.add(agent);
     setWizard({ open: false });
     showToast(editing ? "Agent updated" : "Agent created", "success");
     try {
@@ -122,14 +124,17 @@ export default function Dashboard() {
             <div className="space-y-2.5">
               {agents.items.map((a) => (
                 <SelectableRow key={a.id} selected={selAgents.has(a.id)} onToggle={() => toggle(selAgents, a.id, setSelAgents)}>
-                  <button className="min-w-0 flex-1 text-left cursor-pointer" onClick={() => setWizard({ open: true, edit: a })}>
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
-                      {a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
-                    </div>
-                    <div className="truncate text-xs" style={{ color: "var(--text-faint)" }}>
-                      {VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions
-                    </div>
+                  <button className="flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer" onClick={() => setWizard({ open: true, edit: a })}>
+                    {(() => { const p = getPersona(a.personaId ?? ""); return p ? <AgentAvatar persona={p} size={44} className="flex-none" /> : null; })()}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
+                        {a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
+                      </span>
+                      <span className="block truncate text-xs" style={{ color: "var(--text-faint)" }}>
+                        {getPersona(a.personaId ?? "")?.tone ?? VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions
+                      </span>
+                    </span>
                   </button>
                   {a.vapiId && (
                     <IconButton label="Test call" onClick={() => setCallAgent(a)}><IconPhone width={16} height={16} /></IconButton>
@@ -183,7 +188,7 @@ export default function Dashboard() {
       )}
 
       {wizard.open && (
-        <WizardModal initial={wizard.edit?.config} onClose={() => setWizard({ open: false })} onSave={saveAgent} />
+        <WizardModal initial={wizard.edit?.config} initialPersonaId={wizard.edit?.personaId} onClose={() => setWizard({ open: false })} onSave={saveAgent} />
       )}
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />

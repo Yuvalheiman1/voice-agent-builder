@@ -1,10 +1,13 @@
 import type { AssistantConfig } from "./types";
 
+// OpenAI TTS voices (Vapi passes voiceId straight to the openai voice provider).
 export const VOICES = [
   { id: "alloy", label: "Alloy - neutral" },
   { id: "echo", label: "Echo - warm male" },
   { id: "shimmer", label: "Shimmer - bright female" },
   { id: "onyx", label: "Onyx - deep male" },
+  { id: "nova", label: "Nova - clear female" },
+  { id: "coral", label: "Coral - lively female" },
 ];
 
 export function defaultConfig(): AssistantConfig {

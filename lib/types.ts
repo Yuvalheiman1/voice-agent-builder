@@ -9,6 +9,7 @@ export type AssistantConfig = {
 export type Agent = {
   id: string;
   config: AssistantConfig;
+  personaId?: string; // which pre-built persona this agent was created from (for its avatar)
   vapiId?: string; // set once pushed to Vapi
   createdAt: number;
 };
