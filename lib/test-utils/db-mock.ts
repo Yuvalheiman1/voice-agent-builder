@@ -17,7 +17,10 @@ const METHODS = [
 
 export function createDbMock() {
   const chains: Recorded[] = [];
-  let resolver: (rec: Recorded) => Result = () => ({ data: [], error: null });
+  // `n` is the 0-based index of the awaited query (increments each time a chain
+  // is resolved) - lets a resolver return per-query sequential results.
+  let queryIndex = 0;
+  let resolver: (rec: Recorded, n: number) => Result = () => ({ data: [], error: null });
 
   const from = vi.fn((table: string) => {
     const rec: Recorded = { table, ops: [] };
@@ -30,8 +33,10 @@ export function createDbMock() {
       });
     }
     // Awaitable: `await chain` resolves via the configured resolver.
-    chain.then = (onFulfilled: (r: Result) => unknown, onRejected?: (e: unknown) => unknown) =>
-      Promise.resolve(resolver(rec)).then(onFulfilled, onRejected);
+    chain.then = (onFulfilled: (r: Result) => unknown, onRejected?: (e: unknown) => unknown) => {
+      const n = queryIndex++;
+      return Promise.resolve(resolver(rec, n)).then(onFulfilled, onRejected);
+    };
     return chain;
   });
 
@@ -43,9 +48,13 @@ export function createDbMock() {
     setResult(r: Result) {
       resolver = () => r;
     },
-    /** Per-query result, chosen from the recorded table + ops. */
-    setResolver(fn: (rec: Recorded) => Result) {
+    /** Per-query result, chosen from the recorded table + ops + query index `n`. */
+    setResolver(fn: (rec: Recorded, n: number) => Result) {
       resolver = fn;
+    },
+    /** All recorded ops across every chain, flattened to {method, args}. */
+    calls(): Op[] {
+      return chains.flatMap((c) => c.ops);
     },
     /** First recorded chain for a table. */
     chain(table: string) {
