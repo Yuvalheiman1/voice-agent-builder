@@ -18,6 +18,7 @@ type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
 // One in-flight call we're polling. Transient (React state) - never persisted.
 type LiveCall = { leadId: string; agentId: string; phase: CallPhase; since: number };
 const POLL_MS = 5000;
+const MAX_PARALLEL_CAP = 3; // sane demo ceiling (Vapi plan cap ~10 concurrent total)
 const CALL_CEILING_MS = 6 * 60 * 1000; // ring/queued this long with no connect → no-answer
 const BROWSER_TEST_ID = "lead_browser_test"; // singleton pseudo-lead for in-browser test calls
 
@@ -124,12 +125,14 @@ export default function Dashboard() {
   const leadPhase = (leadId: string): CallPhase | undefined =>
     Object.values(liveCalls).find((c) => c.leadId === leadId)?.phase;
 
+  const agentLiveCount = (agentId: string): number =>
+    Object.values(liveCalls).filter(
+      (c) => c.agentId === agentId && ["queued", "ringing", "on-call", "analyzing"].includes(c.phase),
+    ).length;
+
   const agentStatus = (agentId: string): AgentStatus => {
     if (callAgent?.id === agentId && liveWebPhase && liveWebPhase !== "done") return "on-call";
-    const busy = Object.values(liveCalls).some(
-      (c) => c.agentId === agentId && ["queued", "ringing", "on-call", "analyzing"].includes(c.phase),
-    );
-    return busy ? "on-call" : "idle";
+    return agentLiveCount(agentId) > 0 ? "on-call" : "idle";
   };
 
   // Resume polling for calls left "calling" from a previous session (after reload).
@@ -265,7 +268,8 @@ export default function Dashboard() {
                       <span className="flex items-center gap-2">
                         <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
                         {agentStatus(a.id) === "on-call"
-                          ? <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> On a call</Badge>
+                          ? <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> {agentLiveCount(a.id) > 1 ? `${agentLiveCount(a.id)} calls` : "On a call"}</Badge>
+                          : a.active ? <Badge tone="primary">active</Badge>
                           : a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
                       </span>
                       <span className="block truncate text-xs" style={{ color: "var(--text-faint)" }}>
@@ -273,6 +277,24 @@ export default function Dashboard() {
                       </span>
                     </span>
                   </button>
+                  {a.vapiId && (
+                    <div className="flex flex-none items-center gap-1">
+                      {a.active && (
+                        <span className="flex items-center gap-0.5 rounded-[8px] px-1 text-xs tabular" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                          <button aria-label="Fewer parallel calls" className="cursor-pointer px-1 py-1"
+                            onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.max(1, (a.maxParallel ?? 1) - 1) }); }}>−</button>
+                          <span aria-label={`Parallel calls: ${a.maxParallel ?? 1}`}>∥ {a.maxParallel ?? 1}</span>
+                          <button aria-label="More parallel calls" className="cursor-pointer px-1 py-1"
+                            onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.min(MAX_PARALLEL_CAP, (a.maxParallel ?? 1) + 1) }); }}>+</button>
+                        </span>
+                      )}
+                      <Button size="sm" variant={a.active ? "danger" : "secondary"}
+                        aria-label={a.active ? `Deactivate ${a.config.name}` : `Activate ${a.config.name}`}
+                        onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: !a.active }); }}>
+                        {a.active ? "Deactivate" : "Activate"}
+                      </Button>
+                    </div>
+                  )}
                   {a.vapiId && (
                     <IconButton label="Test call" onClick={() => setCallAgent(a)}><IconPhone width={16} height={16} /></IconButton>
                   )}
