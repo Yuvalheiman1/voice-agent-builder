@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Agent, AssistantConfig, Lead, CallPhase, AgentStatus } from "@/lib/types";
+import type { Agent, AssistantConfig, Lead, CallPhase, AgentStatus, OutcomeLabel } from "@/lib/types";
 import { useAgents, useLeads, newId } from "@/lib/store";
 import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
 import { callPhase, classifyOutcome } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
-import { Button, Card, Badge, Checkbox, Input, Field, Textarea } from "./components/ui";
-import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX } from "./components/icons";
+import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
+import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
 import AgentAvatar from "./components/AgentAvatar";
 import WizardModal from "./components/wizard-modal";
 import CallPanel from "./components/CallPanel";
@@ -32,6 +32,7 @@ export default function Dashboard() {
   const liveCallsRef = useRef(liveCalls);
   liveCallsRef.current = liveCalls;
   const [tab, setTab] = useState<"agents" | "leads">("agents");
+  const [openLead, setOpenLead] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [calling, setCalling] = useState(false);
 
@@ -230,10 +231,12 @@ export default function Dashboard() {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
-                        {a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
+                        {agentStatus(a.id) === "on-call"
+                          ? <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> On a call</Badge>
+                          : a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
                       </span>
                       <span className="block truncate text-xs" style={{ color: "var(--text-faint)" }}>
-                        {getPersona(a.personaId ?? "")?.tone ?? VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions
+                        {getPersona(a.personaId ?? "")?.tone ?? VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions{a.lastOutcome ? ` · last test: ${a.lastOutcome.label}` : ""}
                       </span>
                     </span>
                   </button>
@@ -256,16 +259,38 @@ export default function Dashboard() {
               body="Add a number above, or import a CSV/JSON list of leads to start calling." cta={null} /></div>
           ) : (
             <div className="mt-3 space-y-2.5">
-              {leads.items.map((l) => (
-                <SelectableRow key={l.id} selected={selLeads.has(l.id)} onToggle={() => toggle(selLeads, l.id, setSelLeads)}>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name}</div>
-                    <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
+              {leads.items.map((l) => {
+                const ph = leadPhase(l.id);
+                const canExpand = Boolean(l.outcome?.summary || l.outcome?.transcript);
+                const open = openLead === l.id;
+                const settled = (["booked", "qualified", "not-qualified", "no-answer"] as const).includes(l.status as never);
+                return (
+                  <div key={l.id}>
+                    <SelectableRow selected={selLeads.has(l.id)} onToggle={() => toggle(selLeads, l.id, setSelLeads)}>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name}</div>
+                        <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
+                      </div>
+                      {ph ? <LivePhaseBadge phase={ph} />
+                        : settled ? <OutcomeBadge label={l.status as OutcomeLabel} />
+                        : <LeadStatusBadge status={l.status} />}
+                      {canExpand && (
+                        <IconButton label={open ? "Hide details" : "Show details"} onClick={() => setOpenLead(open ? null : l.id)}>
+                          <span style={{ display: "inline-flex", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}><IconChevron width={16} height={16} /></span>
+                        </IconButton>
+                      )}
+                      <IconButton label="Delete lead" onClick={() => { leads.remove(l.id); toggle(selLeads, l.id, setSelLeads); }}><IconTrash width={16} height={16} /></IconButton>
+                    </SelectableRow>
+                    {open && l.outcome && (
+                      <div className="mx-1 mt-1 rounded-[10px] px-3 py-2.5 text-sm" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                        {l.outcome.reason && <p className="mb-1 text-xs font-medium" style={{ color: "var(--primary)" }}>{l.outcome.reason}</p>}
+                        {l.outcome.summary && <p style={{ color: "var(--text-muted)" }}>{l.outcome.summary}</p>}
+                        {l.outcome.transcript && <TranscriptToggle text={l.outcome.transcript} />}
+                      </div>
+                    )}
                   </div>
-                  <LeadStatusBadge status={l.status} />
-                  <IconButton label="Delete lead" onClick={() => { leads.remove(l.id); toggle(selLeads, l.id, setSelLeads); }}><IconTrash width={16} height={16} /></IconButton>
-                </SelectableRow>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
@@ -353,6 +378,29 @@ function EmptyState({ icon, title, body, cta }: { icon: React.ReactNode; title: 
       <p className="mt-1 max-w-xs text-sm" style={{ color: "var(--text-muted)" }}>{body}</p>
       {cta && <div className="mt-4">{cta}</div>}
     </Card>
+  );
+}
+
+function LivePhaseBadge({ phase }: { phase: CallPhase }) {
+  const dot = <span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} />;
+  if (phase === "ringing") return <Badge tone="live">{dot} Ringing…</Badge>;
+  if (phase === "on-call") return <Badge tone="live">{dot} On call</Badge>;
+  if (phase === "analyzing") return <Badge tone="primary">Analyzing…</Badge>;
+  return <Badge tone="primary">Calling…</Badge>; // queued / other in-flight
+}
+
+function TranscriptToggle({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const lines = text.split("\n").filter((l) => l.trim());
+  return (
+    <div className="mt-2">
+      <button onClick={() => setOpen((o) => !o)} className="text-xs font-medium cursor-pointer" style={{ color: "var(--primary)" }}>
+        {open ? "▾" : "▸"} Transcript ({lines.length} line{lines.length !== 1 ? "s" : ""})
+      </button>
+      {open && (
+        <pre className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap text-xs" style={{ color: "var(--text-muted)", fontFamily: "inherit" }}>{text}</pre>
+      )}
+    </div>
   );
 }
 
