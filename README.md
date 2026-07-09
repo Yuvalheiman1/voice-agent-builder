@@ -9,7 +9,7 @@ A web app where you build a **Vapi voice assistant** by chatting with an AI **bu
 - **Builder** (our app) - writes the assistant *config*. A chat UI (`/api/chat`) edits one `AssistantConfig` object.
 - **Runtime** (Vapi) - holds the live voice call. Our app POSTs the config to Vapi; **Vapi is the source of truth** for assistants and calls.
 
-Live flow: build agent → save to Vapi → **in-browser web call** (WebRTC, no phone) → agent qualifies → calls the `book_meeting` tool → our webhook emails the operator via Resend.
+Live flow: pick a **persona** → build agent → save to Vapi → **in-browser web call** (WebRTC, no phone) → agent qualifies → calls the `book_meeting` tool → our webhook emails the operator via Resend. The dashboard shows **live call status** ("● On a call", Ringing…) and the **outcome** (booked / qualified / not-qualified) with an AI summary + transcript - web tests surface as a "Browser test" lead.
 
 ## Tech Stack
 - **Next.js** (App Router, TypeScript)
@@ -40,7 +40,7 @@ Then open the app, click **New** to create an agent (it saves to Vapi and shows 
 | `OPENAI_API_KEY` | Builder chat model (`gpt-4o`) | https://platform.openai.com/api-keys |
 | `RESEND_API_KEY` | Send the booking email | https://resend.com/api-keys |
 | `OPERATOR_EMAIL` | Inbox that receives booking notices | your email |
-| `PUBLIC_BASE_URL` | Public base URL for the Vapi webhook | your deployed URL (see gotcha below); leave empty for local web-call-only testing |
+| `PUBLIC_BASE_URL` | Public base URL for the Vapi `book_meeting` webhook | your deployed URL, e.g. `https://<project>.vercel.app`. **Set it even for local dev** - if blank, agents saved from localhost push with no webhook and booking silently fails (see gotcha). Restart `next dev` after editing. |
 
 ## Deploying to Vercel
 
@@ -54,6 +54,10 @@ Requirements:
 3. Set `PUBLIC_BASE_URL` to your **public production alias** (e.g. `https://<project>.vercel.app`).
 
 > ⚠️ **Webhook gotcha:** Vapi calls our `/api/vapi/webhook` from its servers, so that URL must be public. Vercel keeps the *deployment-specific* URL (`<project>-<hash>-<team>.vercel.app`) behind Deployment Protection (returns **401**) even when the production alias is public. So the webhook must use the **public production domain** (`PUBLIC_BASE_URL` / `VERCEL_PROJECT_PRODUCTION_URL`) - **never the bare `VERCEL_URL`**. `lib/vapi.ts` handles this.
+>
+> ⚠️ **Empty `PUBLIC_BASE_URL` = no booking.** If it's blank, `baseUrl()` returns `""` and the assistant is pushed with **no `book_meeting` server URL** → Vapi returns `"No result returned"` and no email is sent. Set it (production URL is fine, even locally) and restart the dev server.
+>
+> ⚠️ **Re-save agents after config/code changes.** Voice, analysis schema, and system prompt are baked into the Vapi assistant at push time. Edit an existing agent → **Save** to re-push; new agents get the latest automatically.
 
 ## Project Structure
 ```
