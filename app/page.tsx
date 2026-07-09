@@ -5,7 +5,7 @@ import type { Agent, AssistantConfig, Lead, CallPhase, AgentStatus, OutcomeLabel
 import { useAgents, useLeads, newId } from "@/lib/store";
 import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
-import { callPhase, classifyOutcome } from "@/lib/outcome";
+import { pollDecision } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
@@ -18,7 +18,7 @@ type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
 // One in-flight call we're polling. Transient (React state) - never persisted.
 type LiveCall = { leadId: string; agentId: string; phase: CallPhase; since: number };
 const POLL_MS = 5000;
-const CALL_CEILING_MS = 5 * 60 * 1000;
+const CALL_CEILING_MS = 6 * 60 * 1000; // ring/queued this long with no connect → no-answer
 const BROWSER_TEST_ID = "lead_browser_test"; // singleton pseudo-lead for in-browser test calls
 
 export default function Dashboard() {
@@ -145,38 +145,44 @@ export default function Dashboard() {
       const ids = Object.keys(current);
       if (ids.length === 0) return;
       const now = Date.now();
-      // 5-minute ceiling per call → settle stragglers to no-answer.
-      const stale = ids.filter((id) => now - current[id].since > CALL_CEILING_MS);
-      if (stale.length) {
-        setLiveCalls((m) => {
-          const next = { ...m };
-          stale.forEach((id) => { leads.update(next[id].leadId, { status: "no-answer" }); delete next[id]; });
-          return next;
-        });
-      }
-      const active = ids.filter((id) => !stale.includes(id));
-      if (active.length === 0) return;
+      let calls: any[] = [];
       try {
-        const res = await fetch(`/api/calls/status?ids=${active.join(",")}`);
-        const data = await res.json();
-        const byId: Record<string, any> = {};
-        (data.calls ?? []).forEach((c: any) => { byId[c.callId] = c; });
+        const res = await fetch(`/api/calls/status?ids=${ids.join(",")}`);
+        calls = (await res.json()).calls ?? [];
+      } catch { return; } // network hiccup - keep pending, retry next tick
+      const byId: Record<string, any> = {};
+      calls.forEach((c) => { byId[c.callId] = c; });
+
+      // Decide per call in plain data first (pollDecision is pure + tested), then
+      // apply lead settlements and the liveCalls update as separate, non-nested setStates.
+      const phaseUpdates: Record<string, CallPhase> = {};
+      const remove: string[] = [];
+      const settle: { leadId: string; patch: Partial<Lead> }[] = [];
+      for (const id of ids) {
+        const lc = current[id];
+        const c = byId[id];
+        const elapsed = now - lc.since;
+        if (!c || c.error) {
+          if (elapsed > CALL_CEILING_MS) { settle.push({ leadId: lc.leadId, patch: { status: "no-answer" } }); remove.push(id); }
+          continue;
+        }
+        const d = pollDecision(c, elapsed, now, { connectCeilingMs: CALL_CEILING_MS });
+        phaseUpdates[id] = d.phase;
+        if (d.kind === "settle") { settle.push({ leadId: lc.leadId, patch: { status: d.outcome.label, outcome: d.outcome } }); remove.push(id); }
+        else if (d.kind === "no-answer") { settle.push({ leadId: lc.leadId, patch: { status: "no-answer" } }); remove.push(id); }
+      }
+
+      settle.forEach((s) => leads.update(s.leadId, s.patch));
+      if (remove.length || Object.keys(phaseUpdates).length) {
         setLiveCalls((m) => {
           const next = { ...m };
           for (const id of Object.keys(next)) {
-            const c = byId[id];
-            if (!c || c.error) continue;
-            const phase = callPhase(c);
-            next[id] = { ...next[id], phase };
-            if (phase === "done" || phase === "failed") {
-              const outcome = classifyOutcome(c);
-              leads.update(next[id].leadId, { status: outcome.label, outcome });
-              delete next[id];
-            }
+            if (remove.includes(id)) delete next[id];
+            else if (phaseUpdates[id]) next[id] = { ...next[id], phase: phaseUpdates[id] };
           }
           return next;
         });
-      } catch { /* keep pending; retry next tick */ }
+      }
     };
     tick();
     const timer = setInterval(tick, POLL_MS);

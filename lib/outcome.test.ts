@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { callPhase, classifyOutcome, reduceWebMessage, labelFrom } from "./outcome";
+import { callPhase, classifyOutcome, reduceWebMessage, labelFrom, pollDecision } from "./outcome";
 
 describe("callPhase", () => {
   it("maps live statuses", () => {
@@ -61,6 +61,33 @@ describe("classifyOutcome", () => {
   it("reads transcript from artifact when top-level absent", () => {
     const o = classifyOutcome({ status: "ended", artifact: { transcript: "hi there" } });
     expect(o.transcript).toBe("hi there");
+  });
+});
+
+describe("pollDecision", () => {
+  const NOW = Date.parse("2026-07-09T14:20:00Z");
+  it("a booked call settles as booked even after 6+ minutes elapsed (the regression)", () => {
+    const call = { status: "ended", endedReason: "customer-ended-call", endedAt: "2026-07-09T14:14:47Z", analysis: { summary: "booked", structuredData: { booked: true, qualified: false } } };
+    const d = pollDecision(call, 8 * 60 * 1000, NOW); // 8 min since click
+    expect(d.kind).toBe("settle");
+    expect(d.kind === "settle" && d.outcome.label).toBe("booked");
+  });
+  it("ended but no analysis yet, within grace → waiting", () => {
+    const d = pollDecision({ status: "ended", endedAt: "2026-07-09T14:19:30Z", endedReason: "customer-ended-call" }, 3 * 60 * 1000, NOW);
+    expect(d.kind).toBe("waiting");
+  });
+  it("ended, no analysis, past grace → settle by endedReason (not blind no-answer)", () => {
+    const d = pollDecision({ status: "ended", endedAt: "2026-07-09T14:16:00Z", endedReason: "customer-ended-call" }, 5 * 60 * 1000, NOW);
+    expect(d.kind).toBe("settle");
+    expect(d.kind === "settle" && d.outcome.label).toBe("not-qualified");
+  });
+  it("still ringing past the connect ceiling → no-answer", () => {
+    const d = pollDecision({ status: "ringing" }, 7 * 60 * 1000, NOW);
+    expect(d.kind).toBe("no-answer");
+  });
+  it("still ringing within the ceiling → waiting", () => {
+    const d = pollDecision({ status: "ringing" }, 30 * 1000, NOW);
+    expect(d.kind).toBe("waiting");
   });
 });
 

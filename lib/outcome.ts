@@ -82,6 +82,35 @@ export function classifyOutcome(call: VapiCallLike): CallOutcome {
   };
 }
 
+// Decide what the poller should do with an in-flight call this tick. Pure so it
+// can be unit-tested - this is where "booked" must never be clobbered by a timeout.
+export type PollDecision =
+  | { kind: "waiting"; phase: CallPhase }
+  | { kind: "settle"; phase: CallPhase; outcome: CallOutcome }
+  | { kind: "no-answer"; phase: CallPhase };
+
+export function pollDecision(
+  call: VapiCallLike,
+  elapsedMs: number, // since the call was registered (click time)
+  now: number,
+  opts?: { analysisGraceMs?: number; connectCeilingMs?: number },
+): PollDecision {
+  const analysisGraceMs = opts?.analysisGraceMs ?? 120_000; // wait up to 2m after end for analysis
+  const connectCeilingMs = opts?.connectCeilingMs ?? 360_000; // ring/queued this long → nobody picked up
+  const phase = callPhase(call);
+  if (phase === "done" || phase === "failed") return { kind: "settle", phase, outcome: classifyOutcome(call) };
+  if (phase === "analyzing") {
+    // Call ended; wait for analysis, but don't wait forever - after the grace,
+    // classify with whatever we have (endedReason drives the label, NOT a blind no-answer).
+    const endedMs = call.endedAt ? Date.parse(call.endedAt) : now;
+    if (now - endedMs > analysisGraceMs) return { kind: "settle", phase, outcome: classifyOutcome(call) };
+    return { kind: "waiting", phase };
+  }
+  // queued / ringing - still trying to connect
+  if (elapsedMs > connectCeilingMs) return { kind: "no-answer", phase };
+  return { kind: "waiting", phase };
+}
+
 // Fold one Vapi Web SDK `message` into an accumulating partial outcome.
 export function reduceWebMessage(prev: Partial<CallOutcome>, m: WebMessage): Partial<CallOutcome> {
   if (m?.type === "tool-calls" || m?.type === "function-call") {
