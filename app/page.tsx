@@ -11,6 +11,7 @@ import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } f
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
 import AgentAvatar from "./components/AgentAvatar";
 import WizardModal from "./components/wizard-modal";
+import ChatBuilder from "./components/ChatBuilder";
 import CallPanel from "./components/CallPanel";
 
 type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
@@ -26,6 +27,7 @@ export default function Dashboard() {
   const [selAgents, setSelAgents] = useState<Set<string>>(new Set());
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
   const [wizard, setWizard] = useState<{ open: boolean; edit?: Agent }>({ open: false });
+  const [builderOpen, setBuilderOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [callAgent, setCallAgent] = useState<Agent | null>(null);
   const [liveWebPhase, setLiveWebPhase] = useState<CallPhase | null>(null);
@@ -218,11 +220,11 @@ export default function Dashboard() {
       <div className="grid gap-5 sm:grid-cols-2">
         <section className={tab === "agents" ? "block" : "hidden sm:block"}>
           <PanelHeader icon={<IconBot />} title="Agents" count={agents.items.length}
-            action={<Button size="sm" onClick={() => setWizard({ open: true })}><IconPlus width={16} height={16} /> New</Button>} />
+            action={<Button size="sm" onClick={() => setBuilderOpen(true)}><IconPlus width={16} height={16} /> New</Button>} />
           {agents.items.length === 0 ? (
             <EmptyState icon={<IconBot width={26} height={26} />} title="You have no agents yet"
               body="Create your first voice AI agent - describe how it should talk, qualify leads, and book meetings."
-              cta={<Button onClick={() => setWizard({ open: true })}><IconSparkles width={16} height={16} /> Create your first agent</Button>} />
+              cta={<Button onClick={() => setBuilderOpen(true)}><IconSparkles width={16} height={16} /> Create your first agent</Button>} />
           ) : (
             <div className="space-y-2.5">
               {agents.items.map((a) => (
@@ -319,6 +321,9 @@ export default function Dashboard() {
 
       {wizard.open && (
         <WizardModal initial={wizard.edit?.config} initialPersonaId={wizard.edit?.personaId} onClose={() => setWizard({ open: false })} onSave={saveAgent} />
+      )}
+      {builderOpen && (
+        <ChatBuilder onClose={() => setBuilderOpen(false)} onSave={(config, personaId) => { saveAgent(config, personaId); setBuilderOpen(false); }} />
       )}
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />
