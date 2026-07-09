@@ -10,8 +10,8 @@ import { parseLeadsText, makeLead } from "@/lib/parse-leads";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
 import AgentAvatar from "./components/AgentAvatar";
-import WizardModal from "./components/wizard-modal";
 import ChatBuilder from "./components/ChatBuilder";
+import AgentView from "./components/AgentView";
 import CallPanel from "./components/CallPanel";
 
 type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
@@ -26,8 +26,8 @@ export default function Dashboard() {
   const leads = useLeads();
   const [selAgents, setSelAgents] = useState<Set<string>>(new Set());
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
-  const [wizard, setWizard] = useState<{ open: boolean; edit?: Agent }>({ open: false });
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [viewAgent, setViewAgent] = useState<Agent | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [callAgent, setCallAgent] = useState<Agent | null>(null);
   const [liveWebPhase, setLiveWebPhase] = useState<CallPhase | null>(null);
@@ -51,17 +51,14 @@ export default function Dashboard() {
   };
 
   async function saveAgent(config: AssistantConfig, personaId?: string) {
-    const editing = wizard.edit;
-    const id = editing?.id ?? newId("agent");
-    const agent: Agent = { id, config, personaId, vapiId: editing?.vapiId, createdAt: editing?.createdAt ?? Date.now() };
-    if (editing) agents.update(id, { config, personaId }); else agents.add(agent);
-    setWizard({ open: false });
-    showToast(editing ? "Agent updated" : "Agent created", "success");
+    const id = newId("agent");
+    agents.add({ id, config, personaId, createdAt: Date.now() });
+    showToast("Agent created", "success");
     try {
       const res = await fetch("/api/assistants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config, vapiId: editing?.vapiId }),
+        body: JSON.stringify({ config }),
       });
       const data = await res.json();
       if (res.ok && data.id) agents.update(id, { vapiId: data.id });
@@ -229,7 +226,7 @@ export default function Dashboard() {
             <div className="space-y-2.5">
               {agents.items.map((a) => (
                 <SelectableRow key={a.id} selected={selAgents.has(a.id)} onToggle={() => toggle(selAgents, a.id, setSelAgents)}>
-                  <button className="flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer" onClick={() => setWizard({ open: true, edit: a })}>
+                  <button className="flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer" onClick={() => setViewAgent(a)}>
                     {(() => { const p = getPersona(a.personaId ?? ""); return p ? <AgentAvatar persona={p} size={44} className="flex-none" /> : null; })()}
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
@@ -319,11 +316,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {wizard.open && (
-        <WizardModal initial={wizard.edit?.config} initialPersonaId={wizard.edit?.personaId} onClose={() => setWizard({ open: false })} onSave={saveAgent} />
-      )}
       {builderOpen && (
         <ChatBuilder onClose={() => setBuilderOpen(false)} onSave={(config, personaId) => { saveAgent(config, personaId); setBuilderOpen(false); }} />
+      )}
+      {viewAgent && (
+        <AgentView
+          agent={viewAgent}
+          onClose={() => setViewAgent(null)}
+          onDelete={() => { agents.remove(viewAgent.id); setSelAgents((s) => { const n = new Set(s); n.delete(viewAgent.id); return n; }); setViewAgent(null); }}
+          onTestCall={() => { setCallAgent(viewAgent); setViewAgent(null); }}
+        />
       )}
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />
