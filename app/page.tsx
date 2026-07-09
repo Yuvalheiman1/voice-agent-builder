@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { Agent, AssistantConfig, Lead, CallPhase } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Agent, AssistantConfig, Lead, CallPhase, AgentStatus } from "@/lib/types";
 import { useAgents, useLeads, newId } from "@/lib/store";
 import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
+import { callPhase, classifyOutcome } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX } from "./components/icons";
@@ -13,6 +14,10 @@ import WizardModal from "./components/wizard-modal";
 import CallPanel from "./components/CallPanel";
 
 type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
+// One in-flight call we're polling. Transient (React state) - never persisted.
+type LiveCall = { leadId: string; agentId: string; phase: CallPhase; since: number };
+const POLL_MS = 5000;
+const CALL_CEILING_MS = 5 * 60 * 1000;
 
 export default function Dashboard() {
   const agents = useAgents();
@@ -23,6 +28,9 @@ export default function Dashboard() {
   const [importOpen, setImportOpen] = useState(false);
   const [callAgent, setCallAgent] = useState<Agent | null>(null);
   const [liveWebPhase, setLiveWebPhase] = useState<CallPhase | null>(null);
+  const [liveCalls, setLiveCalls] = useState<Record<string, LiveCall>>({}); // keyed by callId
+  const liveCallsRef = useRef(liveCalls);
+  liveCallsRef.current = liveCalls;
   const [tab, setTab] = useState<"agents" | "leads">("agents");
   const [toast, setToast] = useState<Toast>(null);
   const [calling, setCalling] = useState(false);
@@ -74,7 +82,23 @@ export default function Dashboard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Call failed");
-      showToast(`Calling ${chosen.length} lead${chosen.length > 1 ? "s" : ""} with ${agent.config.name}`, "success");
+      const results: { id: string; callId?: string; ok: boolean }[] = data.results ?? [];
+      const now = Date.now();
+      const ok = results.filter((r) => r.ok && r.callId);
+      // Calls that failed to place revert to "new"; successes go live + store callId.
+      results.filter((r) => !r.ok).forEach((r) => leads.update(r.id, { status: "new" }));
+      if (ok.length) {
+        setLiveCalls((m) => {
+          const next = { ...m };
+          ok.forEach((r) => { next[r.callId!] = { leadId: r.id, agentId: agent.id, phase: "queued", since: now }; });
+          return next;
+        });
+        ok.forEach((r) => leads.update(r.id, {
+          status: "calling",
+          outcome: { callId: r.callId, label: "no-answer", booked: false, qualified: false, at: now },
+        }));
+      }
+      showToast(`Calling ${ok.length} lead${ok.length > 1 ? "s" : ""} with ${agent.config.name}`, "success");
     } catch (e) {
       chosen.forEach((l) => leads.update(l.id, { status: "new" }));
       showToast((e as Error).message, "error");
@@ -82,6 +106,82 @@ export default function Dashboard() {
       setCalling(false);
     }
   }
+
+  // ── Live-call polling + derivations ─────────────────────────────────────────
+  const leadPhase = (leadId: string): CallPhase | undefined =>
+    Object.values(liveCalls).find((c) => c.leadId === leadId)?.phase;
+
+  const agentStatus = (agentId: string): AgentStatus => {
+    if (callAgent?.id === agentId && liveWebPhase && liveWebPhase !== "done") return "on-call";
+    const busy = Object.values(liveCalls).some(
+      (c) => c.agentId === agentId && ["queued", "ringing", "on-call", "analyzing"].includes(c.phase),
+    );
+    return busy ? "on-call" : "idle";
+  };
+
+  // Resume polling for calls left "calling" from a previous session (after reload).
+  useEffect(() => {
+    if (!leads.loaded) return;
+    const now = Date.now();
+    const resume: Record<string, LiveCall> = {};
+    leads.items.forEach((l) => {
+      if (l.status === "calling" && l.outcome?.callId) {
+        resume[l.outcome.callId] = { leadId: l.id, agentId: "", phase: "queued", since: now };
+      }
+    });
+    if (Object.keys(resume).length) setLiveCalls((m) => ({ ...resume, ...m }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads.loaded]);
+
+  // Poll Vapi for outcomes while any call is in flight. Reads liveCalls via ref so
+  // the interval isn't recreated on every phase update - only when the *set* of
+  // pending call ids changes (pendingKey).
+  const pendingKey = Object.keys(liveCalls).sort().join(",");
+  useEffect(() => {
+    if (!pendingKey) return;
+    const tick = async () => {
+      const current = liveCallsRef.current;
+      const ids = Object.keys(current);
+      if (ids.length === 0) return;
+      const now = Date.now();
+      // 5-minute ceiling per call → settle stragglers to no-answer.
+      const stale = ids.filter((id) => now - current[id].since > CALL_CEILING_MS);
+      if (stale.length) {
+        setLiveCalls((m) => {
+          const next = { ...m };
+          stale.forEach((id) => { leads.update(next[id].leadId, { status: "no-answer" }); delete next[id]; });
+          return next;
+        });
+      }
+      const active = ids.filter((id) => !stale.includes(id));
+      if (active.length === 0) return;
+      try {
+        const res = await fetch(`/api/calls/status?ids=${active.join(",")}`);
+        const data = await res.json();
+        const byId: Record<string, any> = {};
+        (data.calls ?? []).forEach((c: any) => { byId[c.callId] = c; });
+        setLiveCalls((m) => {
+          const next = { ...m };
+          for (const id of Object.keys(next)) {
+            const c = byId[id];
+            if (!c || c.error) continue;
+            const phase = callPhase(c);
+            next[id] = { ...next[id], phase };
+            if (phase === "done" || phase === "failed") {
+              const outcome = classifyOutcome(c);
+              leads.update(next[id].leadId, { status: outcome.label, outcome });
+              delete next[id];
+            }
+          }
+          return next;
+        });
+      } catch { /* keep pending; retry next tick */ }
+    };
+    tick();
+    const timer = setInterval(tick, POLL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingKey]);
 
   const actionReady = selAgents.size > 0 && selLeads.size > 0;
   const selectedAgentName = useMemo(
