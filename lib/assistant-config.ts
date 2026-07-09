@@ -1,14 +1,33 @@
 import type { AssistantConfig } from "./types";
 
-// OpenAI TTS voices (Vapi passes voiceId straight to the openai voice provider).
-export const VOICES = [
-  { id: "alloy", label: "Alloy - neutral" },
-  { id: "echo", label: "Echo - warm male" },
-  { id: "shimmer", label: "Shimmer - bright female" },
-  { id: "onyx", label: "Onyx - deep male" },
-  { id: "nova", label: "Nova - clear female" },
-  { id: "coral", label: "Coral - lively female" },
+// Voice registry - each voice carries its Vapi provider so the assistant payload
+// picks the right one (personas default to Vapi-native / ElevenLabs voices below).
+export type VoiceProvider = "openai" | "vapi" | "11labs";
+export type VoiceOption = { id: string; label: string; provider: VoiceProvider };
+
+export const VOICES: VoiceOption[] = [
+  // Vapi-native voices (provider "vapi", referenced by name)
+  { id: "Savannah", label: "Savannah (Vapi)", provider: "vapi" },
+  { id: "Layla", label: "Layla (Vapi)", provider: "vapi" },
+  { id: "Nico", label: "Nico (Vapi)", provider: "vapi" },
+  // ElevenLabs voices (provider "11labs", referenced by voice id)
+  { id: "cgSgspJ2msm6clMCkdW9", label: "Remi voice (ElevenLabs)", provider: "11labs" },
+  { id: "TX3LPaxmHKxFdv7VOQHJ", label: "Vince voice (ElevenLabs)", provider: "11labs" },
+  // OpenAI voices (provider "openai") - still selectable
+  { id: "alloy", label: "Alloy - neutral (OpenAI)", provider: "openai" },
+  { id: "echo", label: "Echo - warm male (OpenAI)", provider: "openai" },
+  { id: "shimmer", label: "Shimmer - bright female (OpenAI)", provider: "openai" },
+  { id: "onyx", label: "Onyx - deep male (OpenAI)", provider: "openai" },
+  { id: "nova", label: "Nova - clear female (OpenAI)", provider: "openai" },
+  { id: "coral", label: "Coral - lively female (OpenAI)", provider: "openai" },
 ];
+
+// Resolve a voiceId to the `{ provider, voiceId }` shape Vapi expects.
+// Unknown ids fall back to OpenAI so custom/edited configs never break the push.
+export function resolveVoice(voiceId: string): { provider: VoiceProvider; voiceId: string } {
+  const v = VOICES.find((x) => x.id === voiceId);
+  return v ? { provider: v.provider, voiceId: v.id } : { provider: "openai", voiceId };
+}
 
 export function defaultConfig(): AssistantConfig {
   return {

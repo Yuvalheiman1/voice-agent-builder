@@ -1,6 +1,7 @@
 import { VapiClient } from "@vapi-ai/server-sdk";
 import type { AssistantConfig } from "./types";
 import type { VapiCallLike } from "./outcome";
+import { resolveVoice } from "./assistant-config";
 
 function client(): VapiClient {
   const token = process.env.VAPI_API_KEY;
@@ -51,7 +52,7 @@ function toVapiAssistant(c: AssistantConfig): any {
         },
       ],
     },
-    voice: { provider: "openai", voiceId: c.voiceId },
+    voice: resolveVoice(c.voiceId),
     serverMessages: ["end-of-call-report", "tool-calls"],
     // Post-call analysis: ask Vapi's extractor for clean outcome fields, read from
     // call.analysis.structuredData by lib/outcome.ts (both web + lead paths).
