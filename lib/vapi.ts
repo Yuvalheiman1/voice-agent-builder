@@ -1,5 +1,6 @@
 import { VapiClient } from "@vapi-ai/server-sdk";
 import type { AssistantConfig } from "./types";
+import type { VapiCallLike } from "./outcome";
 
 function client(): VapiClient {
   const token = process.env.VAPI_API_KEY;
@@ -52,6 +53,23 @@ function toVapiAssistant(c: AssistantConfig): any {
     },
     voice: { provider: "openai", voiceId: c.voiceId },
     serverMessages: ["end-of-call-report", "tool-calls"],
+    // Post-call analysis: ask Vapi's extractor for clean outcome fields, read from
+    // call.analysis.structuredData by lib/outcome.ts (both web + lead paths).
+    analysisPlan: {
+      structuredDataPlan: {
+        enabled: true,
+        schema: {
+          type: "object",
+          properties: {
+            qualified: { type: "boolean", description: "Did the lead meet the qualification criteria discussed on the call?" },
+            booked: { type: "boolean", description: "Did the lead agree to a meeting (book_meeting used or a time agreed)?" },
+            reason: { type: "string", description: "One short sentence explaining the outcome." },
+          },
+          required: ["qualified", "booked"],
+        },
+        timeoutSeconds: 10,
+      },
+    },
     ...(webhook ? { server: { url: webhook } } : {}),
   };
 }
@@ -76,4 +94,10 @@ export async function startOutboundCall(vapiAssistantId: string, phone: string):
     customer: { number: phone },
   } as any);
   return (call as { id: string }).id;
+}
+
+// Fetch a single call (status, endedReason, analysis) for outcome polling.
+export async function getCall(id: string): Promise<VapiCallLike> {
+  const call = await (client().calls as any).get({ id });
+  return call as VapiCallLike;
 }
