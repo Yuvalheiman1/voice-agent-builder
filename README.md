@@ -31,6 +31,8 @@ npm test                     # run the unit tests (vitest)
 
 Then open the app and click **New** to build an agent: **pick a persona** (▶ to hear its voice), then **chat** - tap suggestion chips or type freely - to shape it. Hit **Create** (it saves to Vapi and shows a green **connected** badge) and click **📞 Test call** to talk to it in your browser. Click an agent to **view** its settings (read-only) or **delete** it.
 
+To run outreach: select leads → **Queue N** (rows show `#k in queue`), then **Activate** an agent - it works the queue automatically, up to its **∥ parallel** setting (1–3) simultaneous calls. Outcomes settle on the lead rows, and every call lands in the **Call log** (header button) with summary + transcript. Deactivate to stop claiming; in-flight calls finish normally. Closing the tab pauses new dialing - live calls still complete and book via the webhook.
+
 > Persona voice previews are drop-in: add `public/agents/<persona>-sample.mp3` (see `public/agents/VOICE-SAMPLES.md`). Missing files just disable the ▶ button.
 
 ### Environment variables (`.env.local`)
