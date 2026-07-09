@@ -29,7 +29,9 @@ npm run dev                  # http://localhost:3000
 npm test                     # run the unit tests (vitest)
 ```
 
-Then open the app, click **New** to create an agent (it saves to Vapi and shows a green **connected** badge), and click the **📞 Test call** icon to talk to it in your browser.
+Then open the app and click **New** to build an agent: **pick a persona** (▶ to hear its voice), then **chat** - tap suggestion chips or type freely - to shape it. Hit **Create** (it saves to Vapi and shows a green **connected** badge) and click **📞 Test call** to talk to it in your browser. Click an agent to **view** its settings (read-only) or **delete** it.
+
+> Persona voice previews are drop-in: add `public/agents/<persona>-sample.mp3` (see `public/agents/VOICE-SAMPLES.md`). Missing files just disable the ▶ button.
 
 ### Environment variables (`.env.local`)
 
