@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Agent, AssistantConfig, Lead, CallPhase, AgentStatus, OutcomeLabel } from "@/lib/types";
-import { useAgents, useLeads, newId } from "@/lib/store";
+import type { Agent, AssistantConfig, Lead, CallPhase, AgentStatus, OutcomeLabel, CallOutcome } from "@/lib/types";
+import { useAgents, useLeads, newId, insertCallLog } from "@/lib/store";
 import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
 import { pollDecision } from "@/lib/outcome";
@@ -43,6 +43,17 @@ export default function Dashboard() {
     setToast({ msg, tone });
     setTimeout(() => setToast(null), 4000);
   };
+
+  const agentsError = agents.error;
+  const leadsError = leads.error;
+  useEffect(() => {
+    if (agentsError) showToast(`Agents sync failed: ${agentsError}`, "error");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentsError]);
+  useEffect(() => {
+    if (leadsError) showToast(`Leads sync failed: ${leadsError}`, "error");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadsError]);
 
   const toggle = (set: Set<string>, id: string, setter: (s: Set<string>) => void) => {
     const next = new Set(set);
@@ -96,7 +107,8 @@ export default function Dashboard() {
         });
         ok.forEach((r) => leads.update(r.id, {
           status: "calling",
-          outcome: { callId: r.callId, label: "no-answer", booked: false, qualified: false, at: now },
+          liveCallId: r.callId,
+          claimedBy: agent.id,
         }));
       }
       showToast(`Calling ${ok.length} lead${ok.length > 1 ? "s" : ""} with ${agent.config.name}`, "success");
@@ -126,8 +138,8 @@ export default function Dashboard() {
     const now = Date.now();
     const resume: Record<string, LiveCall> = {};
     leads.items.forEach((l) => {
-      if (l.status === "calling" && l.outcome?.callId) {
-        resume[l.outcome.callId] = { leadId: l.id, agentId: "", phase: "queued", since: now };
+      if (l.status === "calling" && l.liveCallId) {
+        resume[l.liveCallId] = { leadId: l.id, agentId: l.claimedBy ?? "", phase: "queued", since: now };
       }
     });
     if (Object.keys(resume).length) setLiveCalls((m) => ({ ...resume, ...m }));
@@ -157,22 +169,37 @@ export default function Dashboard() {
       // apply lead settlements and the liveCalls update as separate, non-nested setStates.
       const phaseUpdates: Record<string, CallPhase> = {};
       const remove: string[] = [];
-      const settle: { leadId: string; patch: Partial<Lead> }[] = [];
+      const settle: { leadId: string; agentId: string; patch: Partial<Lead>; outcome?: CallOutcome }[] = [];
       for (const id of ids) {
         const lc = current[id];
         const c = byId[id];
         const elapsed = now - lc.since;
         if (!c || c.error) {
-          if (elapsed > CALL_CEILING_MS) { settle.push({ leadId: lc.leadId, patch: { status: "no-answer" } }); remove.push(id); }
+          if (elapsed > CALL_CEILING_MS) {
+            settle.push({ leadId: lc.leadId, agentId: lc.agentId, patch: { status: "no-answer", liveCallId: undefined, claimedBy: undefined } });
+            remove.push(id);
+          }
           continue;
         }
         const d = pollDecision(c, elapsed, now, { connectCeilingMs: CALL_CEILING_MS });
         phaseUpdates[id] = d.phase;
-        if (d.kind === "settle") { settle.push({ leadId: lc.leadId, patch: { status: d.outcome.label, outcome: d.outcome } }); remove.push(id); }
-        else if (d.kind === "no-answer") { settle.push({ leadId: lc.leadId, patch: { status: "no-answer" } }); remove.push(id); }
+        if (d.kind === "settle") {
+          settle.push({ leadId: lc.leadId, agentId: lc.agentId, patch: { status: d.outcome.label, liveCallId: undefined, claimedBy: undefined }, outcome: d.outcome });
+          remove.push(id);
+        } else if (d.kind === "no-answer") {
+          settle.push({ leadId: lc.leadId, agentId: lc.agentId, patch: { status: "no-answer", liveCallId: undefined, claimedBy: undefined } });
+          remove.push(id);
+        }
       }
 
-      settle.forEach((s) => leads.update(s.leadId, s.patch));
+      settle.forEach((s) => {
+        leads.update(s.leadId, s.patch);
+        if (s.outcome) {
+          insertCallLog({ outcome: s.outcome, agentId: s.agentId || null, leadId: s.leadId, type: "phone" })
+            .then(() => leads.refresh())
+            .catch((e) => showToast(`Call log failed: ${(e as Error).message}`, "error"));
+        }
+      });
       if (remove.length || Object.keys(phaseUpdates).length) {
         setLiveCalls((m) => {
           const next = { ...m };
@@ -342,15 +369,17 @@ export default function Dashboard() {
           onClose={() => { setCallAgent(null); setLiveWebPhase(null); }}
           onPhaseChange={setLiveWebPhase}
           onOutcome={(o) => {
-            agents.update(callAgent.id, { lastOutcome: o });
-            // Surface the in-browser test as a "Browser test" lead so its outcome
-            // (summary + transcript) shows in the Leads list like a real call.
             const name = `Browser test · ${callAgent.config.name}`;
+            // Surface the in-browser test as a "Browser test" lead; its summary/
+            // transcript render from the calls log (derived outcome).
             if (leads.items.some((l) => l.id === BROWSER_TEST_ID)) {
-              leads.update(BROWSER_TEST_ID, { name, status: o.label, outcome: o });
+              leads.update(BROWSER_TEST_ID, { name, status: o.label });
             } else {
-              leads.add({ id: BROWSER_TEST_ID, name, phone: "in-browser web call", status: o.label, outcome: o, createdAt: Date.now() });
+              leads.add({ id: BROWSER_TEST_ID, name, phone: "in-browser web call", status: o.label, createdAt: Date.now() });
             }
+            insertCallLog({ outcome: o, agentId: callAgent.id, leadId: BROWSER_TEST_ID, type: "web" })
+              .then(() => { leads.refresh(); agents.refresh(); })
+              .catch((e) => showToast(`Call log failed: ${(e as Error).message}`, "error"));
           }}
         />
       )}
