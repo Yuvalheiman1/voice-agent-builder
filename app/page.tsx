@@ -18,6 +18,7 @@ type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
 type LiveCall = { leadId: string; agentId: string; phase: CallPhase; since: number };
 const POLL_MS = 5000;
 const CALL_CEILING_MS = 5 * 60 * 1000;
+const BROWSER_TEST_ID = "lead_browser_test"; // singleton pseudo-lead for in-browser test calls
 
 export default function Dashboard() {
   const agents = useAgents();
@@ -268,7 +269,10 @@ export default function Dashboard() {
                   <div key={l.id}>
                     <SelectableRow selected={selLeads.has(l.id)} onToggle={() => toggle(selLeads, l.id, setSelLeads)}>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name}</span>
+                          {l.id === BROWSER_TEST_ID && <Badge tone="muted">test</Badge>}
+                        </div>
                         <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
                       </div>
                       {ph ? <LivePhaseBadge phase={ph} />
@@ -324,7 +328,17 @@ export default function Dashboard() {
           agent={callAgent}
           onClose={() => { setCallAgent(null); setLiveWebPhase(null); }}
           onPhaseChange={setLiveWebPhase}
-          onOutcome={(o) => agents.update(callAgent.id, { lastOutcome: o })}
+          onOutcome={(o) => {
+            agents.update(callAgent.id, { lastOutcome: o });
+            // Surface the in-browser test as a "Browser test" lead so its outcome
+            // (summary + transcript) shows in the Leads list like a real call.
+            const name = `Browser test · ${callAgent.config.name}`;
+            if (leads.items.some((l) => l.id === BROWSER_TEST_ID)) {
+              leads.update(BROWSER_TEST_ID, { name, status: o.label, outcome: o });
+            } else {
+              leads.add({ id: BROWSER_TEST_ID, name, phone: "in-browser web call", status: o.label, outcome: o, createdAt: Date.now() });
+            }
+          }}
         />
       )}
       {toast && (
