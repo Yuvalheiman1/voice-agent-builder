@@ -7,7 +7,7 @@ import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
 import { pollDecision } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
-import { queueOrder } from "@/lib/dialer";
+import { claimSlots, queueOrder, recoveryActions } from "@/lib/dialer";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
 import AgentAvatar from "./components/AgentAvatar";
@@ -19,6 +19,7 @@ type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
 // One in-flight call we're polling. Transient (React state) - never persisted.
 type LiveCall = { leadId: string; agentId: string; phase: CallPhase; since: number };
 const POLL_MS = 5000;
+const DIAL_MS = 5000;
 const MAX_PARALLEL_CAP = 3; // sane demo ceiling (Vapi plan cap ~10 concurrent total)
 const CALL_CEILING_MS = 6 * 60 * 1000; // ring/queued this long with no connect → no-answer
 const BROWSER_TEST_ID = "lead_browser_test"; // singleton pseudo-lead for in-browser test calls
@@ -136,17 +137,20 @@ export default function Dashboard() {
     return agentLiveCount(agentId) > 0 ? "on-call" : "idle";
   };
 
-  // Resume polling for calls left "calling" from a previous session (after reload).
+  // Recover in-flight state from a previous session: resume polling calls that
+  // exist, revert claims whose call was never created (claim crash) to the queue.
   useEffect(() => {
     if (!leads.loaded) return;
-    const now = Date.now();
-    const resume: Record<string, LiveCall> = {};
-    leads.items.forEach((l) => {
-      if (l.status === "calling" && l.liveCallId) {
-        resume[l.liveCallId] = { leadId: l.id, agentId: l.claimedBy ?? "", phase: "queued", since: now };
-      }
-    });
-    if (Object.keys(resume).length) setLiveCalls((m) => ({ ...resume, ...m }));
+    const { resume, revertToQueue } = recoveryActions(leads.items);
+    if (resume.length) {
+      const now = Date.now();
+      setLiveCalls((m) => {
+        const next = { ...m };
+        resume.forEach((r) => { next[r.callId] = { leadId: r.leadId, agentId: r.agentId, phase: "queued", since: now }; });
+        return next;
+      });
+    }
+    revertToQueue.forEach((id) => leads.update(id, { status: "queued", queuedAt: Date.now(), claimedBy: undefined }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads.loaded]);
 
@@ -221,13 +225,75 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingKey]);
 
+  const queueIds = useMemo(() => queueOrder(leads.items), [leads.items]);
+
+  // ── Dialer: active agents claim queued leads up to their max_parallel ──────
+  const agentsRef = useRef(agents.items);
+  agentsRef.current = agents.items;
+  const claimingRef = useRef(false);
+  const dialKey = `${agents.items.filter((a) => a.active).map((a) => `${a.id}:${a.maxParallel ?? 1}`).join("|")}·${queueIds.length}`;
+  useEffect(() => {
+    const anyActive = agentsRef.current.some((a) => a.active);
+    if (!anyActive || queueIds.length === 0) return;
+    const tick = async () => {
+      if (claimingRef.current) return; // one claim pass at a time
+      claimingRef.current = true;
+      try {
+        const liveCounts: Record<string, number> = {};
+        Object.values(liveCallsRef.current).forEach((c) => {
+          if (["queued", "ringing", "on-call", "analyzing"].includes(c.phase)) {
+            liveCounts[c.agentId] = (liveCounts[c.agentId] ?? 0) + 1;
+          }
+        });
+        for (const plan of claimSlots(agentsRef.current, liveCounts)) {
+          for (let s = 0; s < plan.slots; s++) {
+            // 1) claim (atomic server-side)
+            const claimRes = await fetch("/api/leads/claim", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ agentId: plan.agentId }),
+            });
+            if (claimRes.status === 404) return; // queue dry - stop everything
+            const claimData = await claimRes.json();
+            if (!claimRes.ok) throw new Error(claimData.error || "Claim failed");
+            const lead = claimData.lead as Lead;
+            // 2) place the call (leadId rides as Vapi metadata)
+            try {
+              const callRes = await fetch("/api/calls", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ vapiId: plan.vapiId, leads: [{ id: lead.id, phone: lead.phone }] }),
+              });
+              const callData = await callRes.json();
+              const r = callData.results?.[0];
+              if (!callRes.ok || !r?.ok || !r.callId) throw new Error(r?.error || callData.error || "Call failed");
+              const now = Date.now();
+              setLiveCalls((m) => ({ ...m, [r.callId]: { leadId: lead.id, agentId: plan.agentId, phase: "queued", since: now } }));
+              leads.update(lead.id, { status: "calling", liveCallId: r.callId, claimedBy: plan.agentId });
+            } catch (e) {
+              // claim succeeded but the call didn't - put the lead back in line
+              leads.update(lead.id, { status: "queued", queuedAt: Date.now(), claimedBy: undefined });
+              showToast(`Call failed for ${lead.name || lead.phone}: ${(e as Error).message}`, "error");
+            }
+          }
+        }
+      } catch (e) {
+        showToast(`Dialer: ${(e as Error).message}`, "error"); // next tick retries
+      } finally {
+        claimingRef.current = false;
+      }
+    };
+    tick();
+    const timer = setInterval(tick, DIAL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialKey, leads.loaded]);
+
   const actionReady = selAgents.size > 0 && selLeads.size > 0;
   const selectedAgentName = useMemo(
     () => agents.items.find((a) => selAgents.has(a.id))?.config.name,
     [agents.items, selAgents],
   );
-
-  const queueIds = useMemo(() => queueOrder(leads.items), [leads.items]);
 
   function queueSelected() {
     const chosen = leads.items
