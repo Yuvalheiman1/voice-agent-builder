@@ -1,53 +1,101 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { Agent, Lead } from "./types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Agent, CallOutcome, Lead } from "./types";
 
-// A tiny localStorage-backed list hook. Persistence layer for the demo so the
-// whole UX works on the deployed URL without any backend/DB. Swappable for a
-// hosted DB (Turso) later without touching the components.
-function useLocalList<T extends { id: string }>(key: string) {
+// DB-backed list hook (replaces the old localStorage hook - same interface).
+// Optimistic writes: state updates instantly, the API call runs behind it;
+// on failure we surface `error` and resync from the server. Reads assemble
+// derived fields (lead.outcome, agent.lastOutcome) server-side.
+function useDbList<T extends { id: string }>(endpoint: string, listKey: string) {
   const [items, setItems] = useState<T[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
-  useEffect(() => {
+  const refresh = useCallback(async () => {
     try {
-      const raw = localStorage.getItem(key);
-      if (raw) setItems(JSON.parse(raw));
-    } catch {
-      /* ignore corrupt storage */
+      const res = await fetch(endpoint);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `GET ${endpoint} failed`);
+      if (alive.current) { setItems(data[listKey] ?? []); setError(null); }
+    } catch (e) {
+      if (alive.current) setError((e as Error).message);
+    } finally {
+      if (alive.current) setLoaded(true);
     }
-    setLoaded(true);
-  }, [key]);
+  }, [endpoint, listKey]);
 
-  // Persist whenever items change (after initial load).
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      localStorage.setItem(key, JSON.stringify(items));
-    } catch {
-      /* storage full / unavailable - keep in-memory */
-    }
-  }, [key, items, loaded]);
+  useEffect(() => { refresh(); }, [refresh]);
 
-  const add = useCallback((item: T) => setItems((prev) => [item, ...prev]), []);
-  const addMany = useCallback((newItems: T[]) => setItems((prev) => [...newItems, ...prev]), []);
-  const update = useCallback(
-    (id: string, patch: Partial<T>) =>
-      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it))),
-    [],
+  // Fire a write; on failure surface the error and resync so the optimistic
+  // state never silently drifts from the DB.
+  const send = useCallback(
+    (url: string, method: string, body?: unknown) => {
+      fetch(url, {
+        method,
+        ...(body !== undefined
+          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+          : {}),
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error((await res.json()).error || `${method} ${url} failed`);
+        })
+        .catch((e) => {
+          if (!alive.current) return;
+          setError((e as Error).message);
+          refresh();
+        });
+    },
+    [refresh],
   );
-  const remove = useCallback((id: string) => setItems((prev) => prev.filter((it) => it.id !== id)), []);
 
-  return { items, loaded, add, addMany, update, remove };
+  const add = useCallback((item: T) => {
+    setItems((prev) => [item, ...prev]);
+    send(endpoint, "POST", item);
+  }, [endpoint, send]);
+
+  const addMany = useCallback((newItems: T[]) => {
+    setItems((prev) => [...newItems, ...prev]);
+    send(endpoint, "POST", { items: newItems });
+  }, [endpoint, send]);
+
+  const update = useCallback((id: string, patch: Partial<T>) => {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    send(`${endpoint}/${id}`, "PATCH", patch);
+  }, [endpoint, send]);
+
+  const remove = useCallback((id: string) => {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+    send(`${endpoint}/${id}`, "DELETE");
+  }, [endpoint, send]);
+
+  return { items, loaded, error, add, addMany, update, remove, refresh };
 }
 
 export function useAgents() {
-  return useLocalList<Agent>("voicebuilder.agents");
+  return useDbList<Agent>("/api/agents", "agents");
 }
 
 export function useLeads() {
-  return useLocalList<Lead>("voicebuilder.leads");
+  return useDbList<Lead>("/api/leads", "leads");
+}
+
+// Append a row to the calls log. Fire-and-forget friendly (callers may await
+// to refresh derived outcomes right after).
+export async function insertCallLog(entry: {
+  outcome: CallOutcome;
+  agentId: string | null;
+  leadId: string | null;
+  type: "phone" | "web";
+}): Promise<void> {
+  const res = await fetch("/api/calls-log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(entry),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || "calls-log insert failed");
 }
 
 export function newId(prefix: string): string {
