@@ -10,19 +10,25 @@ export type Agent = {
   id: string;
   config: AssistantConfig;
   personaId?: string; // which pre-built persona this agent was created from (for its avatar)
+  active?: boolean;      // dialer activation toggle (DB-backed)
+  maxParallel?: number;  // max simultaneous calls (DB-backed, default 1)
   vapiId?: string; // set once pushed to Vapi
-  lastOutcome?: CallOutcome; // last web test-call outcome (for the "last test" line)
+  lastOutcome?: CallOutcome; // DERIVED from calls table (latest type='web' row) - set by GET /api/agents, never written
   createdAt: number;
 };
 
-export type LeadStatus = "new" | "calling" | "qualified" | "booked" | "no-answer" | "not-qualified";
+export type LeadStatus = "new" | "queued" | "calling" | "qualified" | "booked" | "no-answer" | "not-qualified";
 
 export type Lead = {
   id: string;
   name: string;
   phone: string;
+  email?: string;        // captured at import or by book_meeting on a call
   status: LeadStatus;
-  outcome?: CallOutcome; // persisted final outcome (outcome.callId set early for poll resume)
+  queuedAt?: number;     // FIFO key while status='queued'
+  claimedBy?: string;    // agent id while status='calling'
+  liveCallId?: string;   // in-flight Vapi call id (crash/reload recovery)
+  outcome?: CallOutcome; // DERIVED from calls table (latest row for this lead) - set by GET /api/leads, never written
   createdAt: number;
 };
 
