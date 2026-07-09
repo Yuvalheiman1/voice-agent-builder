@@ -17,6 +17,13 @@ export function parseToolCall(body: any): ParsedToolCall[] {
   });
 }
 
+// Lead linkage: the dialer stamps { leadId } into the call's
+// assistantOverrides.metadata at creation; Vapi echoes it back here.
+export function extractCallMeta(body: any): { leadId?: string } {
+  const leadId = body?.message?.call?.assistantOverrides?.metadata?.leadId;
+  return typeof leadId === "string" && leadId ? { leadId } : {};
+}
+
 export function parseEndOfCall(body: any) {
   const m = body?.message ?? {};
   const call = m.call ?? {};

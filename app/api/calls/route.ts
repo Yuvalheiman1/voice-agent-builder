@@ -9,7 +9,7 @@ export async function POST(req: Request) {
     const results = await Promise.all(
       leads.map(async (l: { id: string; phone: string }) => {
         try {
-          const callId = await startOutboundCall(vapiId, l.phone);
+          const callId = await startOutboundCall(vapiId, l.phone, l.id);
           return { id: l.id, callId, ok: true };
         } catch (e) {
           return { id: l.id, ok: false, error: (e as Error).message };

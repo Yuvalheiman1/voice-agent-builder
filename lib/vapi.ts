@@ -89,13 +89,16 @@ export async function upsertAssistant(config: AssistantConfig, vapiId?: string):
   return (created as { id: string }).id;
 }
 
-export async function startOutboundCall(vapiAssistantId: string, phone: string): Promise<string> {
+export async function startOutboundCall(vapiAssistantId: string, phone: string, leadId?: string): Promise<string> {
   const phoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
   if (!phoneNumberId) throw new Error("VAPI_PHONE_NUMBER_ID is not set (import a Twilio number in Vapi)");
   const call = await client().calls.create({
     assistantId: vapiAssistantId,
     phoneNumberId,
     customer: { number: phone },
+    // Stamp the lead onto the call so the webhook can link book_meeting back
+    // to our DB row. Verified: CreateCallDto has no top-level metadata - // it lives on assistantOverrides.
+    ...(leadId ? { assistantOverrides: { metadata: { leadId } } } : {}),
   } as any);
   return (call as { id: string }).id;
 }

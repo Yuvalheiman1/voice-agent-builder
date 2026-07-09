@@ -1,5 +1,6 @@
-import { parseToolCall, parseEndOfCall } from "@/lib/webhook";
+import { parseToolCall, parseEndOfCall, extractCallMeta } from "@/lib/webhook";
 import { sendBookingEmail } from "@/lib/email";
+import { db } from "@/lib/db";
 
 // Vapi server webhook. Handles `tool-calls` (book_meeting → email the operator
 // via Resend) and `end-of-call-report` (log the outcome). Always returns HTTP 200
@@ -10,11 +11,20 @@ export async function POST(req: Request) {
   const type = body?.message?.type;
 
   if (type === "tool-calls") {
+    const { leadId } = extractCallMeta(body);
     const results = [];
     for (const c of parseToolCall(body)) {
       if (c.name === "book_meeting") {
         const r = await sendBookingEmail(c.args);
         results.push(r.ok ? { toolCallId: c.id, result: r.detail } : { toolCallId: c.id, error: r.detail });
+        // Best-effort: remember the email the lead stated on the call.
+        if (r.ok && leadId && typeof c.args?.email === "string" && c.args.email) {
+          try {
+            await db().from("leads").update({ email: c.args.email }).eq("id", leadId);
+          } catch (e) {
+            console.error("lead email update failed", (e as Error).message);
+          }
+        }
       } else {
         results.push({ toolCallId: c.id, result: "ok" });
       }

@@ -1,5 +1,5 @@
-import { test, expect } from "vitest";
-import { parseToolCall, parseEndOfCall } from "./webhook";
+import { test, expect, describe, it } from "vitest";
+import { parseToolCall, parseEndOfCall, extractCallMeta } from "./webhook";
 
 test("parseToolCall reads the real nested Vapi shape (function.name + JSON-string arguments)", () => {
   const body = { message: { type: "tool-calls", toolCallList: [
@@ -41,4 +41,15 @@ test("parseEndOfCall is safe on a minimal/empty body", () => {
   const r = parseEndOfCall({});
   expect(r.vapiCallId).toBe("");
   expect(r.status).toBe("ended");
+});
+
+describe("extractCallMeta", () => {
+  it("reads leadId from call assistantOverrides metadata", () => {
+    const body = { message: { call: { assistantOverrides: { metadata: { leadId: "lead_9" } } } } };
+    expect(extractCallMeta(body)).toEqual({ leadId: "lead_9" });
+  });
+  it("returns empty object when absent", () => {
+    expect(extractCallMeta({})).toEqual({});
+    expect(extractCallMeta({ message: { call: {} } })).toEqual({});
+  });
 });
