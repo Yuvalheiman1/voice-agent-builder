@@ -8,6 +8,7 @@ import { parseLeadsText, makeLead } from "@/lib/parse-leads";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX } from "./components/icons";
 import WizardModal from "./components/wizard-modal";
+import CallPanel from "./components/CallPanel";
 
 type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
 
@@ -18,6 +19,7 @@ export default function Dashboard() {
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
   const [wizard, setWizard] = useState<{ open: boolean; edit?: Agent }>({ open: false });
   const [importOpen, setImportOpen] = useState(false);
+  const [callAgent, setCallAgent] = useState<Agent | null>(null);
   const [tab, setTab] = useState<"agents" | "leads">("agents");
   const [toast, setToast] = useState<Toast>(null);
   const [calling, setCalling] = useState(false);
@@ -129,6 +131,9 @@ export default function Dashboard() {
                       {VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions
                     </div>
                   </button>
+                  {a.vapiId && (
+                    <IconButton label="Test call" onClick={() => setCallAgent(a)}><IconPhone width={16} height={16} /></IconButton>
+                  )}
                   <IconButton label="Delete agent" onClick={() => { agents.remove(a.id); toggle(selAgents, a.id, setSelAgents); }}><IconTrash width={16} height={16} /></IconButton>
                 </SelectableRow>
               ))}
@@ -182,6 +187,9 @@ export default function Dashboard() {
       )}
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />
+      )}
+      {callAgent && (
+        <CallPanel agent={callAgent} onClose={() => setCallAgent(null)} />
       )}
       {toast && (
         <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center px-4" aria-live="polite">
