@@ -8,7 +8,12 @@ function client(): VapiClient {
 }
 
 function baseUrl(): string {
+  // Prefer an explicit public URL, then Vercel's stable PRODUCTION domain.
+  // Never fall back to VERCEL_URL alone: that is the deployment-specific URL,
+  // which stays behind Deployment Protection (401) even when the production
+  // alias is public - Vapi's webhook calls would 401. See PUBLIC_BASE_URL.
   if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
   return "";
 }
