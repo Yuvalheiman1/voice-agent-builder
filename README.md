@@ -74,6 +74,19 @@ docs/                design spec + implementation plan
 - `npm test` runs Vitest. Pure backend logic is TDD'd: `lib/email.test.ts`, `lib/webhook.test.ts`.
 - Voice calls can't be unit-tested - verify them live in the browser.
 
+## Debugging - where are the logs
+
+There is no single log pane; the system spans four services. When something breaks, follow the source that owns it:
+
+| Source | What it has | How to follow it |
+|--------|-------------|------------------|
+| **Vapi call log** ⭐ | Every call: full transcript, **tool-call args + results/errors** | Vapi dashboard → Calls, or `GET https://api.vapi.ai/call` (Bearer `VAPI_API_KEY`). Richest source for "why did the call/booking fail" - e.g. a `book_meeting` result of `{"code":"401",...}` means the webhook URL was unreachable. |
+| **Vercel runtime logs** | Backend: API routes, the webhook's `console.log`, server errors | `vercel logs <deployment-url>`, or Vercel dashboard → project → **Logs**. |
+| **Resend logs** | Email send + delivery status | resend.com dashboard → Emails |
+| **Browser console** | Client-side `CallPanel` / Web SDK errors | DevTools (F12) → Console, during a call |
+
+**Fast triage:** call/booking wrong → Vapi call record first; backend threw → `vercel logs`; email missing → Resend; UI/mic → browser console.
+
 ## Contributing
 - Branch naming: `feat/`, `fix/`, `chore/`
 - Commit style: imperative present ("add builder chat route")
