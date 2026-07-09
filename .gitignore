@@ -39,3 +39,6 @@ temp/
 
 .vercel
 .env*
+
+# Playwright MCP scratch (verify-ui screenshots/logs)
+.playwright-mcp/
