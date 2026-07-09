@@ -2,20 +2,68 @@
 
 import { useEffect, useRef, useState } from "react";
 import Vapi from "@vapi-ai/web";
-import type { Agent } from "@/lib/types";
+import type { Agent, CallOutcome, CallPhase } from "@/lib/types";
 import { getPersona } from "@/lib/agents";
-import { Button } from "./ui";
+import { reduceWebMessage, labelFrom } from "@/lib/outcome";
+import { Button, OutcomeBadge } from "./ui";
 import AgentAvatar from "./AgentAvatar";
 import { IconPhone, IconX } from "./icons";
 
 type Line = { role: "assistant" | "user"; text: string };
 type Status = "idle" | "connecting" | "live" | "ended" | "error";
 
-export default function CallPanel({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+export default function CallPanel({
+  agent,
+  onClose,
+  onOutcome,
+  onPhaseChange,
+}: {
+  agent: Agent;
+  onClose: () => void;
+  onOutcome?: (o: CallOutcome) => void;
+  onPhaseChange?: (p: CallPhase) => void;
+}) {
   const vapiRef = useRef<Vapi | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string>();
   const [lines, setLines] = useState<Line[]>([]);
+  const [outcome, setOutcome] = useState<CallOutcome | null>(null);
+
+  // Refs so the once-registered Vapi listeners never read stale state/props.
+  const accRef = useRef<Partial<CallOutcome>>({});
+  const linesRef = useRef<Line[]>([]);
+  const finalizedRef = useRef(false);
+  const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalizeRef = useRef<(report?: any) => void>(() => {});
+  const phaseRef = useRef<((p: CallPhase) => void) | undefined>(onPhaseChange);
+  phaseRef.current = onPhaseChange;
+  const outcomeCbRef = useRef<((o: CallOutcome) => void) | undefined>(onOutcome);
+  outcomeCbRef.current = onOutcome;
+
+  // Build the outcome exactly once, from accumulated web messages + transcript lines.
+  finalizeRef.current = (report?: any) => {
+    if (finalizedRef.current) return;
+    finalizedRef.current = true;
+    if (fallbackRef.current) { clearTimeout(fallbackRef.current); fallbackRef.current = null; }
+    const p = report ? reduceWebMessage(accRef.current, report) : accRef.current;
+    const transcript =
+      p.transcript ??
+      linesRef.current.map((l) => `${l.role === "user" ? "You" : agent.config.name}: ${l.text}`).join("\n");
+    const o: CallOutcome = {
+      label: labelFrom(Boolean(p.booked), Boolean(p.qualified), p.endedReason),
+      booked: Boolean(p.booked),
+      qualified: Boolean(p.qualified),
+      reason: p.reason,
+      summary: p.summary,
+      transcript: transcript || undefined,
+      endedReason: p.endedReason,
+      durationSec: p.durationSec,
+      at: Date.now(),
+    };
+    setOutcome(o);
+    outcomeCbRef.current?.(o);
+    phaseRef.current?.("done");
+  };
 
   useEffect(() => {
     const key = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY;
@@ -26,18 +74,28 @@ export default function CallPanel({ agent, onClose }: { agent: Agent; onClose: (
     }
     const vapi = new Vapi(key);
     vapiRef.current = vapi;
-    vapi.on("call-start", () => setStatus("live"));
-    vapi.on("call-end", () => setStatus("ended"));
+    vapi.on("call-start", () => { setStatus("live"); phaseRef.current?.("on-call"); });
+    vapi.on("call-end", () => {
+      setStatus("ended");
+      phaseRef.current?.("analyzing");
+      // If no end-of-call-report arrives, finalize with what we have.
+      fallbackRef.current = setTimeout(() => finalizeRef.current?.(), 8000);
+    });
     vapi.on("error", (e: unknown) => {
       setError(String((e as Error)?.message ?? e));
       setStatus("error");
     });
     vapi.on("message", (m: any) => {
       if (m?.type === "transcript" && m?.transcriptType === "final") {
-        setLines((ls) => [...ls, { role: m.role === "user" ? "user" : "assistant", text: m.transcript }]);
+        const line: Line = { role: m.role === "user" ? "user" : "assistant", text: m.transcript };
+        linesRef.current = [...linesRef.current, line];
+        setLines((ls) => [...ls, line]);
       }
+      accRef.current = reduceWebMessage(accRef.current, m);
+      if (m?.type === "end-of-call-report") finalizeRef.current?.(m);
     });
     return () => {
+      if (fallbackRef.current) clearTimeout(fallbackRef.current);
       try { vapi.stop(); } catch { /* already stopped */ }
     };
   }, []);
@@ -51,9 +109,16 @@ export default function CallPanel({ agent, onClose }: { agent: Agent; onClose: (
     setStatus("connecting");
     setError(undefined);
     setLines([]);
+    setOutcome(null);
+    linesRef.current = [];
+    accRef.current = {};
+    finalizedRef.current = false;
+    phaseRef.current?.("ringing");
     vapiRef.current?.start(agent.vapiId);
   };
   const stop = () => vapiRef.current?.stop();
+
+  const persona = getPersona(agent.personaId ?? "");
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -63,7 +128,7 @@ export default function CallPanel({ agent, onClose }: { agent: Agent; onClose: (
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
           <div className="flex min-w-0 items-center gap-3">
-            {(() => { const p = getPersona(agent.personaId ?? ""); return p ? <AgentAvatar persona={p} size={40} className="flex-none" /> : null; })()}
+            {persona ? <AgentAvatar persona={persona} size={40} className="flex-none" /> : null}
             <div className="min-w-0">
               <h2 className="truncate text-base font-semibold" style={{ color: "var(--text)" }}>Test call · {agent.config.name}</h2>
               <p className="text-xs" style={{ color: "var(--text-faint)" }}>In-browser web call</p>
@@ -77,7 +142,22 @@ export default function CallPanel({ agent, onClose }: { agent: Agent; onClose: (
         <div className="flex-1 overflow-y-auto px-5 py-4">
           <StatusBadge status={status} />
           {error && <p className="mt-2 text-sm" style={{ color: "var(--live)" }}>{error}</p>}
-          {lines.length === 0 && status !== "error" && (
+
+          {outcome && (
+            <div className="mt-3 rounded-[12px] p-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              <div className="flex items-center gap-2">
+                <OutcomeBadge label={outcome.label} />
+                {outcome.durationSec != null && (
+                  <span className="text-xs tabular" style={{ color: "var(--text-faint)" }}>{outcome.durationSec}s</span>
+                )}
+              </div>
+              {outcome.summary
+                ? <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>{outcome.summary}</p>
+                : <p className="mt-2 text-sm" style={{ color: "var(--text-faint)" }}>Summary unavailable.</p>}
+            </div>
+          )}
+
+          {lines.length === 0 && status !== "error" && !outcome && (
             <p className="mt-3 text-sm" style={{ color: "var(--text-faint)" }}>
               Press Start, allow your mic, and say hello - {agent.config.name} will greet you.
             </p>
@@ -95,7 +175,7 @@ export default function CallPanel({ agent, onClose }: { agent: Agent; onClose: (
           {status === "live" || status === "connecting" ? (
             <Button variant="danger" onClick={stop}><IconPhone width={16} height={16} /> End call</Button>
           ) : (
-            <Button onClick={start} disabled={!agent.vapiId}><IconPhone width={16} height={16} /> Start call</Button>
+            <Button onClick={start} disabled={!agent.vapiId}><IconPhone width={16} height={16} /> {outcome ? "Call again" : "Start call"}</Button>
           )}
         </div>
       </div>

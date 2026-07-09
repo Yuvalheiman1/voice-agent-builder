@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import type { OutcomeLabel } from "@/lib/types";
 
 export function Button({
   children,
@@ -55,6 +56,17 @@ export function Badge({ children, tone = "muted" }: { children: React.ReactNode;
       {children}
     </span>
   );
+}
+
+export function OutcomeBadge({ label }: { label: OutcomeLabel }) {
+  const map: Record<OutcomeLabel, { tone: "muted" | "success" | "live" | "primary"; text: string }> = {
+    booked: { tone: "success", text: "Booked" },
+    qualified: { tone: "primary", text: "Qualified" },
+    "not-qualified": { tone: "muted", text: "Not qualified" },
+    "no-answer": { tone: "muted", text: "No answer" },
+  };
+  const { tone, text } = map[label];
+  return <Badge tone={tone}>{text}</Badge>;
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {

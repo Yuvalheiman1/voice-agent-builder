@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Agent, AssistantConfig, Lead } from "@/lib/types";
+import type { Agent, AssistantConfig, Lead, CallPhase } from "@/lib/types";
 import { useAgents, useLeads, newId } from "@/lib/store";
 import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
@@ -22,6 +22,7 @@ export default function Dashboard() {
   const [wizard, setWizard] = useState<{ open: boolean; edit?: Agent }>({ open: false });
   const [importOpen, setImportOpen] = useState(false);
   const [callAgent, setCallAgent] = useState<Agent | null>(null);
+  const [liveWebPhase, setLiveWebPhase] = useState<CallPhase | null>(null);
   const [tab, setTab] = useState<"agents" | "leads">("agents");
   const [toast, setToast] = useState<Toast>(null);
   const [calling, setCalling] = useState(false);
@@ -194,7 +195,12 @@ export default function Dashboard() {
         <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />
       )}
       {callAgent && (
-        <CallPanel agent={callAgent} onClose={() => setCallAgent(null)} />
+        <CallPanel
+          agent={callAgent}
+          onClose={() => { setCallAgent(null); setLiveWebPhase(null); }}
+          onPhaseChange={setLiveWebPhase}
+          onOutcome={(o) => agents.update(callAgent.id, { lastOutcome: o })}
+        />
       )}
       {toast && (
         <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center px-4" aria-live="polite">
