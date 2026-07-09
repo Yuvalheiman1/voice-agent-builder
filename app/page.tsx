@@ -230,9 +230,11 @@ export default function Dashboard() {
   const queueIds = useMemo(() => queueOrder(leads.items), [leads.items]);
 
   function queueSelected() {
-    const chosen = leads.items.filter(
-      (l) => selLeads.has(l.id) && l.status !== "queued" && l.status !== "calling",
-    );
+    const chosen = leads.items
+      .filter((l) => selLeads.has(l.id) && l.status !== "queued" && l.status !== "calling")
+      // leads.items is newest-first (store prepends on add), so sort by
+      // createdAt ascending to keep multi-select FIFO = creation order.
+      .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
     const now = Date.now();
     // now + i keeps multi-select FIFO deterministic (same-ms ties would order arbitrarily)
     chosen.forEach((l, i) => leads.update(l.id, { status: "queued", queuedAt: now + i }));
