@@ -7,6 +7,7 @@ import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
 import { pollDecision } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
+import { queueOrder } from "@/lib/dialer";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
 import AgentAvatar from "./components/AgentAvatar";
@@ -226,6 +227,23 @@ export default function Dashboard() {
     [agents.items, selAgents],
   );
 
+  const queueIds = useMemo(() => queueOrder(leads.items), [leads.items]);
+
+  function queueSelected() {
+    const chosen = leads.items.filter(
+      (l) => selLeads.has(l.id) && l.status !== "queued" && l.status !== "calling",
+    );
+    const now = Date.now();
+    // now + i keeps multi-select FIFO deterministic (same-ms ties would order arbitrarily)
+    chosen.forEach((l, i) => leads.update(l.id, { status: "queued", queuedAt: now + i }));
+    setSelLeads(new Set());
+    if (chosen.length) showToast(`Queued ${chosen.length} lead${chosen.length > 1 ? "s" : ""}`, "success");
+  }
+
+  function unqueue(id: string) {
+    leads.update(id, { status: "new", queuedAt: undefined });
+  }
+
   return (
     <div className="mx-auto min-h-dvh w-full max-w-6xl px-4 pb-32 pt-5 sm:px-6">
       <header className="mb-6 flex items-center justify-between">
@@ -307,7 +325,10 @@ export default function Dashboard() {
 
         <section className={tab === "leads" ? "block" : "hidden sm:block"}>
           <PanelHeader icon={<IconUsers />} title="Leads" count={leads.items.length}
-            action={<Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}><IconUpload width={16} height={16} /> Import</Button>} />
+            action={<div className="flex items-center gap-2">
+              {selLeads.size > 0 && <Button size="sm" onClick={queueSelected}>Queue {selLeads.size}</Button>}
+              <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}><IconUpload width={16} height={16} /> Import</Button>
+            </div>} />
           <QuickAddLead onAdd={(name, phone) => leads.add(makeLead(name, phone))} />
           {leads.items.length === 0 ? (
             <div className="mt-3"><EmptyState icon={<IconUsers width={26} height={26} />} title="No leads yet"
@@ -330,8 +351,12 @@ export default function Dashboard() {
                         <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
                       </div>
                       {ph ? <LivePhaseBadge phase={ph} />
+                        : l.status === "queued" ? <Badge tone="primary">#{queueIds.indexOf(l.id) + 1} in queue</Badge>
                         : settled ? <OutcomeBadge label={l.status as OutcomeLabel} />
                         : <LeadStatusBadge status={l.status} />}
+                      {l.status === "queued" && (
+                        <IconButton label="Remove from queue" onClick={() => unqueue(l.id)}><IconX width={16} height={16} /></IconButton>
+                      )}
                       {canExpand && (
                         <IconButton label={open ? "Hide details" : "Show details"} onClick={() => setOpenLead(open ? null : l.id)}>
                           <span style={{ display: "inline-flex", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}><IconChevron width={16} height={16} /></span>
