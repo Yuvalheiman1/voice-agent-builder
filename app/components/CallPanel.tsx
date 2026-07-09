@@ -32,6 +32,7 @@ export default function CallPanel({
   // Refs so the once-registered Vapi listeners never read stale state/props.
   const accRef = useRef<Partial<CallOutcome>>({});
   const linesRef = useRef<Line[]>([]);
+  const startedRef = useRef(false);
   const finalizedRef = useRef(false);
   const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalizeRef = useRef<(report?: any) => void>(() => {});
@@ -96,6 +97,9 @@ export default function CallPanel({
     });
     return () => {
       if (fallbackRef.current) clearTimeout(fallbackRef.current);
+      // Panel closed before the end-of-call report / fallback: record the outcome
+      // now (with whatever we have) so the "Browser test" lead isn't lost.
+      if (startedRef.current && !finalizedRef.current) finalizeRef.current?.();
       try { vapi.stop(); } catch { /* already stopped */ }
     };
   }, []);
@@ -113,6 +117,7 @@ export default function CallPanel({
     linesRef.current = [];
     accRef.current = {};
     finalizedRef.current = false;
+    startedRef.current = true;
     phaseRef.current?.("ringing");
     vapiRef.current?.start(agent.vapiId);
   };
