@@ -10,7 +10,7 @@ file simply disables the button (no crash) - drop the mp3 in and it lights up.
 | Vera  | `vera-sample.mp3`  | Savannah (Vapi) | Vapi dashboard → Voices → Savannah |
 | Theo  | `theo-sample.mp3`  | Nico (Vapi) | Vapi dashboard → Voices → Nico |
 | Remi  | `remi-sample.mp3`  | Jessica (ElevenLabs · `cgSgspJ2msm6clMCkdW9`) | elevenlabs.io → Voice Library → Jessica |
-| Vince | `vince-sample.mp3` | Liam (ElevenLabs · `TX3LPaxmHKxFdv7VOQHJ`) | elevenlabs.io → Voice Library → Liam |
+| Vince | `vince-sample.mp3` | Will  (ElevenLabs · `bIHbv24MWmeRgasZH58o`) | elevenlabs.io → Voice Library → Liam |
 
 Tip: keep them small (mono, ~64–96kbps mp3) - they're loaded on demand (`preload="none"`),
 only when someone taps ▶.
