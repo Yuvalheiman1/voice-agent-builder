@@ -16,7 +16,7 @@ Live flow: pick a **persona** → build agent → save to Vapi → **in-browser 
 - **Vercel AI SDK** (`ai` + `@ai-sdk/openai`) - builder chat
 - **Vapi** (`@vapi-ai/web`, `@vapi-ai/server-sdk`) - voice assistant + in-browser web call
 - **Resend** - booking-notification email to the operator
-- **localStorage** - client-side persistence for now (Turso later)
+- **Supabase** - persistence (agents, leads, calls log) behind our API routes; server-only service key, RLS deny-all
 - **Vitest** - unit tests for the backend logic
 - **Vercel** - deploy target (public URL; the Vapi webhook must be publicly reachable)
 
@@ -43,6 +43,8 @@ Then open the app and click **New** to build an agent: **pick a persona** (▶ t
 | `RESEND_API_KEY` | Send the booking email | https://resend.com/api-keys |
 | `OPERATOR_EMAIL` | Inbox that receives booking notices | your email |
 | `PUBLIC_BASE_URL` | Public base URL for the Vapi `book_meeting` webhook | your deployed URL, e.g. `https://<project>.vercel.app`. **Set it even for local dev** - if blank, agents saved from localhost push with no webhook and booking silently fails (see gotcha). Restart `next dev` after editing. |
+| `SUPABASE_URL` | Supabase project URL (server-only) | Supabase dashboard → Project Settings → API |
+| `SUPABASE_SERVICE_KEY` | Supabase `service_role` key (server-only - **never** `NEXT_PUBLIC_`) | Supabase dashboard → Project Settings → API keys |
 
 ## Deploying to Vercel
 
@@ -71,7 +73,9 @@ lib/assistant-config config type, defaults, merge
 lib/vapi             Vapi server client + assistant payload builder
 lib/email            booking email (Resend) - buildBookingEmail is unit-tested
 lib/webhook          Vapi webhook parsers - unit-tested
-lib/store            localStorage persistence
+lib/store            DB-backed hooks (optimistic writes → /api routes → Supabase)
+lib/db               server-only Supabase client (service key)
+lib/rows             row ↔ type mappers + derived outcomes - unit-tested
 .claude/             Agentic OS (context, skills, project knowledge)
 docs/                design spec + implementation plan
 ```
