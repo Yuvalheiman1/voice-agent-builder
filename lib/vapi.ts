@@ -23,7 +23,10 @@ function baseUrl(): string {
 // Build a Vapi assistant payload from our config. `any` for the SDK payload:
 // Vapi's DTO is large and evolving - see https://github.com/VapiAI/docs.
 function toVapiAssistant(c: AssistantConfig): any {
-  const prompt = `${c.systemPrompt}\n\nQualification questions:\n${c.qualificationQuestions.map((q) => `- ${q}`).join("\n")}`;
+  // Inject today's date (at push time) so the agent stops hallucinating past
+  // dates (e.g. 2023) and books real future times.
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = `${c.systemPrompt}\n\nToday's date is ${today}. When booking a meeting, always choose a time in the future relative to today and pass startTime as an ISO 8601 datetime.\n\nQualification questions:\n${c.qualificationQuestions.map((q) => `- ${q}`).join("\n")}`;
   const webhook = baseUrl() ? `${baseUrl()}/api/vapi/webhook` : undefined;
   return {
     name: c.name,
