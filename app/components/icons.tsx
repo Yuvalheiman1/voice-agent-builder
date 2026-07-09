@@ -17,3 +17,5 @@ export const IconSparkles = (p: P) => (<svg {...base(p)}><path d="M12 3l1.9 4.6L
 export const IconTrash = (p: P) => (<svg {...base(p)}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>);
 export const IconArrowLeft = (p: P) => (<svg {...base(p)}><path d="M19 12H5M12 19l-7-7 7-7" /></svg>);
 export const IconArrowRight = (p: P) => (<svg {...base(p)}><path d="M5 12h14M12 5l7 7-7 7" /></svg>);
+export const IconPlay = (p: P) => (<svg {...base(p)}><polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none" /></svg>);
+export const IconChevron = (p: P) => (<svg {...base(p)}><polyline points="6 9 12 15 18 9" /></svg>);

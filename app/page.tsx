@@ -1,15 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { Agent, AssistantConfig, Lead } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Agent, AssistantConfig, Lead, CallPhase, AgentStatus, OutcomeLabel } from "@/lib/types";
 import { useAgents, useLeads, newId } from "@/lib/store";
 import { VOICES } from "@/lib/assistant-config";
+import { getPersona } from "@/lib/agents";
+import { callPhase, classifyOutcome } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
-import { Button, Card, Badge, Checkbox, Input, Field, Textarea } from "./components/ui";
-import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX } from "./components/icons";
+import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
+import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
+import AgentAvatar from "./components/AgentAvatar";
 import WizardModal from "./components/wizard-modal";
+import CallPanel from "./components/CallPanel";
 
 type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
+// One in-flight call we're polling. Transient (React state) - never persisted.
+type LiveCall = { leadId: string; agentId: string; phase: CallPhase; since: number };
+const POLL_MS = 5000;
+const CALL_CEILING_MS = 5 * 60 * 1000;
+const BROWSER_TEST_ID = "lead_browser_test"; // singleton pseudo-lead for in-browser test calls
 
 export default function Dashboard() {
   const agents = useAgents();
@@ -18,7 +27,13 @@ export default function Dashboard() {
   const [selLeads, setSelLeads] = useState<Set<string>>(new Set());
   const [wizard, setWizard] = useState<{ open: boolean; edit?: Agent }>({ open: false });
   const [importOpen, setImportOpen] = useState(false);
+  const [callAgent, setCallAgent] = useState<Agent | null>(null);
+  const [liveWebPhase, setLiveWebPhase] = useState<CallPhase | null>(null);
+  const [liveCalls, setLiveCalls] = useState<Record<string, LiveCall>>({}); // keyed by callId
+  const liveCallsRef = useRef(liveCalls);
+  liveCallsRef.current = liveCalls;
   const [tab, setTab] = useState<"agents" | "leads">("agents");
+  const [openLead, setOpenLead] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [calling, setCalling] = useState(false);
 
@@ -33,11 +48,11 @@ export default function Dashboard() {
     setter(next);
   };
 
-  async function saveAgent(config: AssistantConfig) {
+  async function saveAgent(config: AssistantConfig, personaId?: string) {
     const editing = wizard.edit;
     const id = editing?.id ?? newId("agent");
-    const agent: Agent = { id, config, vapiId: editing?.vapiId, createdAt: editing?.createdAt ?? Date.now() };
-    if (editing) agents.update(id, { config }); else agents.add(agent);
+    const agent: Agent = { id, config, personaId, vapiId: editing?.vapiId, createdAt: editing?.createdAt ?? Date.now() };
+    if (editing) agents.update(id, { config, personaId }); else agents.add(agent);
     setWizard({ open: false });
     showToast(editing ? "Agent updated" : "Agent created", "success");
     try {
@@ -69,7 +84,23 @@ export default function Dashboard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Call failed");
-      showToast(`Calling ${chosen.length} lead${chosen.length > 1 ? "s" : ""} with ${agent.config.name}`, "success");
+      const results: { id: string; callId?: string; ok: boolean }[] = data.results ?? [];
+      const now = Date.now();
+      const ok = results.filter((r) => r.ok && r.callId);
+      // Calls that failed to place revert to "new"; successes go live + store callId.
+      results.filter((r) => !r.ok).forEach((r) => leads.update(r.id, { status: "new" }));
+      if (ok.length) {
+        setLiveCalls((m) => {
+          const next = { ...m };
+          ok.forEach((r) => { next[r.callId!] = { leadId: r.id, agentId: agent.id, phase: "queued", since: now }; });
+          return next;
+        });
+        ok.forEach((r) => leads.update(r.id, {
+          status: "calling",
+          outcome: { callId: r.callId, label: "no-answer", booked: false, qualified: false, at: now },
+        }));
+      }
+      showToast(`Calling ${ok.length} lead${ok.length > 1 ? "s" : ""} with ${agent.config.name}`, "success");
     } catch (e) {
       chosen.forEach((l) => leads.update(l.id, { status: "new" }));
       showToast((e as Error).message, "error");
@@ -77,6 +108,82 @@ export default function Dashboard() {
       setCalling(false);
     }
   }
+
+  // ── Live-call polling + derivations ─────────────────────────────────────────
+  const leadPhase = (leadId: string): CallPhase | undefined =>
+    Object.values(liveCalls).find((c) => c.leadId === leadId)?.phase;
+
+  const agentStatus = (agentId: string): AgentStatus => {
+    if (callAgent?.id === agentId && liveWebPhase && liveWebPhase !== "done") return "on-call";
+    const busy = Object.values(liveCalls).some(
+      (c) => c.agentId === agentId && ["queued", "ringing", "on-call", "analyzing"].includes(c.phase),
+    );
+    return busy ? "on-call" : "idle";
+  };
+
+  // Resume polling for calls left "calling" from a previous session (after reload).
+  useEffect(() => {
+    if (!leads.loaded) return;
+    const now = Date.now();
+    const resume: Record<string, LiveCall> = {};
+    leads.items.forEach((l) => {
+      if (l.status === "calling" && l.outcome?.callId) {
+        resume[l.outcome.callId] = { leadId: l.id, agentId: "", phase: "queued", since: now };
+      }
+    });
+    if (Object.keys(resume).length) setLiveCalls((m) => ({ ...resume, ...m }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads.loaded]);
+
+  // Poll Vapi for outcomes while any call is in flight. Reads liveCalls via ref so
+  // the interval isn't recreated on every phase update - only when the *set* of
+  // pending call ids changes (pendingKey).
+  const pendingKey = Object.keys(liveCalls).sort().join(",");
+  useEffect(() => {
+    if (!pendingKey) return;
+    const tick = async () => {
+      const current = liveCallsRef.current;
+      const ids = Object.keys(current);
+      if (ids.length === 0) return;
+      const now = Date.now();
+      // 5-minute ceiling per call → settle stragglers to no-answer.
+      const stale = ids.filter((id) => now - current[id].since > CALL_CEILING_MS);
+      if (stale.length) {
+        setLiveCalls((m) => {
+          const next = { ...m };
+          stale.forEach((id) => { leads.update(next[id].leadId, { status: "no-answer" }); delete next[id]; });
+          return next;
+        });
+      }
+      const active = ids.filter((id) => !stale.includes(id));
+      if (active.length === 0) return;
+      try {
+        const res = await fetch(`/api/calls/status?ids=${active.join(",")}`);
+        const data = await res.json();
+        const byId: Record<string, any> = {};
+        (data.calls ?? []).forEach((c: any) => { byId[c.callId] = c; });
+        setLiveCalls((m) => {
+          const next = { ...m };
+          for (const id of Object.keys(next)) {
+            const c = byId[id];
+            if (!c || c.error) continue;
+            const phase = callPhase(c);
+            next[id] = { ...next[id], phase };
+            if (phase === "done" || phase === "failed") {
+              const outcome = classifyOutcome(c);
+              leads.update(next[id].leadId, { status: outcome.label, outcome });
+              delete next[id];
+            }
+          }
+          return next;
+        });
+      } catch { /* keep pending; retry next tick */ }
+    };
+    tick();
+    const timer = setInterval(tick, POLL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingKey]);
 
   const actionReady = selAgents.size > 0 && selLeads.size > 0;
   const selectedAgentName = useMemo(
@@ -120,15 +227,23 @@ export default function Dashboard() {
             <div className="space-y-2.5">
               {agents.items.map((a) => (
                 <SelectableRow key={a.id} selected={selAgents.has(a.id)} onToggle={() => toggle(selAgents, a.id, setSelAgents)}>
-                  <button className="min-w-0 flex-1 text-left cursor-pointer" onClick={() => setWizard({ open: true, edit: a })}>
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
-                      {a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
-                    </div>
-                    <div className="truncate text-xs" style={{ color: "var(--text-faint)" }}>
-                      {VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions
-                    </div>
+                  <button className="flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer" onClick={() => setWizard({ open: true, edit: a })}>
+                    {(() => { const p = getPersona(a.personaId ?? ""); return p ? <AgentAvatar persona={p} size={44} className="flex-none" /> : null; })()}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
+                        {agentStatus(a.id) === "on-call"
+                          ? <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> On a call</Badge>
+                          : a.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}
+                      </span>
+                      <span className="block truncate text-xs" style={{ color: "var(--text-faint)" }}>
+                        {getPersona(a.personaId ?? "")?.tone ?? VOICES.find((v) => v.id === a.config.voiceId)?.label.split(" - ")[0] ?? a.config.voiceId} · {a.config.qualificationQuestions.length} questions{a.lastOutcome ? ` · last test: ${a.lastOutcome.label}` : ""}
+                      </span>
+                    </span>
                   </button>
+                  {a.vapiId && (
+                    <IconButton label="Test call" onClick={() => setCallAgent(a)}><IconPhone width={16} height={16} /></IconButton>
+                  )}
                   <IconButton label="Delete agent" onClick={() => { agents.remove(a.id); toggle(selAgents, a.id, setSelAgents); }}><IconTrash width={16} height={16} /></IconButton>
                 </SelectableRow>
               ))}
@@ -145,16 +260,41 @@ export default function Dashboard() {
               body="Add a number above, or import a CSV/JSON list of leads to start calling." cta={null} /></div>
           ) : (
             <div className="mt-3 space-y-2.5">
-              {leads.items.map((l) => (
-                <SelectableRow key={l.id} selected={selLeads.has(l.id)} onToggle={() => toggle(selLeads, l.id, setSelLeads)}>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name}</div>
-                    <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
+              {leads.items.map((l) => {
+                const ph = leadPhase(l.id);
+                const canExpand = Boolean(l.outcome?.summary || l.outcome?.transcript);
+                const open = openLead === l.id;
+                const settled = (["booked", "qualified", "not-qualified", "no-answer"] as const).includes(l.status as never);
+                return (
+                  <div key={l.id}>
+                    <SelectableRow selected={selLeads.has(l.id)} onToggle={() => toggle(selLeads, l.id, setSelLeads)}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name}</span>
+                          {l.id === BROWSER_TEST_ID && <Badge tone="muted">test</Badge>}
+                        </div>
+                        <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
+                      </div>
+                      {ph ? <LivePhaseBadge phase={ph} />
+                        : settled ? <OutcomeBadge label={l.status as OutcomeLabel} />
+                        : <LeadStatusBadge status={l.status} />}
+                      {canExpand && (
+                        <IconButton label={open ? "Hide details" : "Show details"} onClick={() => setOpenLead(open ? null : l.id)}>
+                          <span style={{ display: "inline-flex", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}><IconChevron width={16} height={16} /></span>
+                        </IconButton>
+                      )}
+                      <IconButton label="Delete lead" onClick={() => { leads.remove(l.id); toggle(selLeads, l.id, setSelLeads); }}><IconTrash width={16} height={16} /></IconButton>
+                    </SelectableRow>
+                    {open && l.outcome && (
+                      <div className="mx-1 mt-1 rounded-[10px] px-3 py-2.5 text-sm" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                        {l.outcome.reason && <p className="mb-1 text-xs font-medium" style={{ color: "var(--primary)" }}>{l.outcome.reason}</p>}
+                        {l.outcome.summary && <p style={{ color: "var(--text-muted)" }}>{l.outcome.summary}</p>}
+                        {l.outcome.transcript && <TranscriptToggle text={l.outcome.transcript} />}
+                      </div>
+                    )}
                   </div>
-                  <LeadStatusBadge status={l.status} />
-                  <IconButton label="Delete lead" onClick={() => { leads.remove(l.id); toggle(selLeads, l.id, setSelLeads); }}><IconTrash width={16} height={16} /></IconButton>
-                </SelectableRow>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
@@ -178,10 +318,28 @@ export default function Dashboard() {
       )}
 
       {wizard.open && (
-        <WizardModal initial={wizard.edit?.config} onClose={() => setWizard({ open: false })} onSave={saveAgent} />
+        <WizardModal initial={wizard.edit?.config} initialPersonaId={wizard.edit?.personaId} onClose={() => setWizard({ open: false })} onSave={saveAgent} />
       )}
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />
+      )}
+      {callAgent && (
+        <CallPanel
+          agent={callAgent}
+          onClose={() => { setCallAgent(null); setLiveWebPhase(null); }}
+          onPhaseChange={setLiveWebPhase}
+          onOutcome={(o) => {
+            agents.update(callAgent.id, { lastOutcome: o });
+            // Surface the in-browser test as a "Browser test" lead so its outcome
+            // (summary + transcript) shows in the Leads list like a real call.
+            const name = `Browser test · ${callAgent.config.name}`;
+            if (leads.items.some((l) => l.id === BROWSER_TEST_ID)) {
+              leads.update(BROWSER_TEST_ID, { name, status: o.label, outcome: o });
+            } else {
+              leads.add({ id: BROWSER_TEST_ID, name, phone: "in-browser web call", status: o.label, outcome: o, createdAt: Date.now() });
+            }
+          }}
+        />
       )}
       {toast && (
         <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center px-4" aria-live="polite">
@@ -234,6 +392,29 @@ function EmptyState({ icon, title, body, cta }: { icon: React.ReactNode; title: 
       <p className="mt-1 max-w-xs text-sm" style={{ color: "var(--text-muted)" }}>{body}</p>
       {cta && <div className="mt-4">{cta}</div>}
     </Card>
+  );
+}
+
+function LivePhaseBadge({ phase }: { phase: CallPhase }) {
+  const dot = <span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} />;
+  if (phase === "ringing") return <Badge tone="live">{dot} Ringing…</Badge>;
+  if (phase === "on-call") return <Badge tone="live">{dot} On call</Badge>;
+  if (phase === "analyzing") return <Badge tone="primary">Analyzing…</Badge>;
+  return <Badge tone="primary">Calling…</Badge>; // queued / other in-flight
+}
+
+function TranscriptToggle({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const lines = text.split("\n").filter((l) => l.trim());
+  return (
+    <div className="mt-2">
+      <button onClick={() => setOpen((o) => !o)} className="text-xs font-medium cursor-pointer" style={{ color: "var(--primary)" }}>
+        {open ? "▾" : "▸"} Transcript ({lines.length} line{lines.length !== 1 ? "s" : ""})
+      </button>
+      {open && (
+        <pre className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap text-xs" style={{ color: "var(--text-muted)", fontFamily: "inherit" }}>{text}</pre>
+      )}
+    </div>
   );
 }
 
