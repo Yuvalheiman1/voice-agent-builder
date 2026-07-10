@@ -392,7 +392,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <section className={tab === "agents" ? "block" : "hidden sm:block"}>
+        <section className={`min-w-0 ${tab === "agents" ? "block" : "hidden sm:block"}`}>
           <PanelHeader icon={<IconBot />} title="Agents" count={agents.items.length}
             action={<Button size="sm" onClick={() => setBuilderOpen(true)}><IconPlus width={16} height={16} /> New</Button>} />
           {agents.items.length === 0 ? (
@@ -476,7 +476,7 @@ export default function Dashboard() {
           )}
         </section>
 
-        <section className={tab === "leads" ? "block" : "hidden sm:block"}>
+        <section className={`min-w-0 ${tab === "leads" ? "block" : "hidden sm:block"}`}>
           <PanelHeader icon={<IconUsers />} title="Leads" count={leads.items.length}
             action={<div className="flex items-center gap-2">
               {selLeads.size > 0 && <Button size="sm" onClick={queueSelected}>Queue {selLeads.size}</Button>}
