@@ -1,6 +1,6 @@
 // lib/dialer.test.ts
 import { describe, it, expect } from "vitest";
-import { claimSlots, queueOrder, recoveryActions } from "./dialer";
+import { claimSlots, queueOrder, recoveryActions, capAllowance } from "./dialer";
 import type { Agent, Lead } from "./types";
 
 const config = { name: "A", firstMessage: "hi", systemPrompt: "sp", voiceId: "alloy", qualificationQuestions: [] };
@@ -61,5 +61,20 @@ describe("recoveryActions", () => {
     const r = recoveryActions([lead("l1"), lead("l2", { status: "queued", queuedAt: 1 }), lead("l3", { status: "booked" })]);
     expect(r.resume).toEqual([]);
     expect(r.revertToQueue).toEqual([]);
+  });
+});
+
+describe("capAllowance", () => {
+  it("allows the remainder under the cap", () => {
+    expect(capAllowance(30, 10, 2)).toBe(18);
+  });
+  it("counts live calls against the allowance", () => {
+    expect(capAllowance(30, 29, 1)).toBe(0);
+  });
+  it("clamps at zero when over", () => {
+    expect(capAllowance(30, 45, 0)).toBe(0);
+  });
+  it("zero cap allows nothing", () => {
+    expect(capAllowance(0, 0, 0)).toBe(0);
   });
 });

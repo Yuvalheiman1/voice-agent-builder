@@ -37,3 +37,12 @@ export function recoveryActions(leads: Lead[]): {
   }
   return { resume, revertToQueue };
 }
+
+// Money guard: how many NEW calls may be claimed right now, given the daily
+// cap, today's already-made phone calls, and calls currently in flight.
+// Live calls count against the allowance so parallel claims can't overshoot.
+export const DAILY_CALL_CAP = 30;
+
+export function capAllowance(cap: number, todayPhoneCalls: number, liveCalls: number): number {
+  return Math.max(0, cap - todayPhoneCalls - liveCalls);
+}
