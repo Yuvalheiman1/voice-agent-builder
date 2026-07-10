@@ -7,7 +7,7 @@ import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
 import { pollDecision } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
-import { claimSlots, queueOrder, recoveryActions } from "@/lib/dialer";
+import { claimSlots, queueOrder, recoveryActions, capAllowance, DAILY_CALL_CAP } from "@/lib/dialer";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
 import AgentAvatar from "./components/AgentAvatar";
@@ -233,6 +233,7 @@ export default function Dashboard() {
   const agentsRef = useRef(agents.items);
   agentsRef.current = agents.items;
   const claimingRef = useRef(false);
+  const capNotifiedRef = useRef(false); // cap-reached toast fires once, re-arms when allowance recovers
   const dialKey = `${agents.items.filter((a) => a.active).map((a) => `${a.id}:${a.maxParallel ?? 1}`).join("|")}·${queueIds.length}`;
   useEffect(() => {
     const anyActive = agentsRef.current.some((a) => a.active);
@@ -247,8 +248,33 @@ export default function Dashboard() {
             liveCounts[c.agentId] = (liveCounts[c.agentId] ?? 0) + 1;
           }
         });
+        // Money guard: verify today's phone-call count before claiming.
+        // Fail CLOSED - if the count can't be fetched, claim nothing this tick.
+        const liveNow = Object.values(liveCounts).reduce((a, b) => a + b, 0);
+        let allowance = 0;
+        try {
+          const midnight = new Date();
+          midnight.setHours(0, 0, 0, 0);
+          const capRes = await fetch(`/api/calls-log?since=${midnight.getTime()}&count=1`);
+          const capData = await capRes.json();
+          if (!capRes.ok) throw new Error(capData.error || "count failed");
+          allowance = capAllowance(DAILY_CALL_CAP, capData.count ?? 0, liveNow);
+        } catch {
+          showToast("Couldn't verify the daily call cap - not dialing this tick.", "error");
+          return;
+        }
+        if (allowance <= 0) {
+          if (!capNotifiedRef.current) {
+            capNotifiedRef.current = true;
+            showToast(`Daily call cap reached (${DAILY_CALL_CAP}) - no more calls today.`, "error");
+          }
+          return;
+        }
+        capNotifiedRef.current = false;
+        let claimedThisTick = 0;
         for (const plan of claimSlots(agentsRef.current, liveCounts)) {
           for (let s = 0; s < plan.slots; s++) {
+            if (claimedThisTick >= allowance) return; // cap: no more claims today
             // 1) claim (atomic server-side)
             const claimRes = await fetch("/api/leads/claim", {
               method: "POST",
@@ -272,6 +298,7 @@ export default function Dashboard() {
               const now = Date.now();
               setLiveCalls((m) => ({ ...m, [r.callId]: { leadId: lead.id, agentId: plan.agentId, phase: "queued", since: now } }));
               leads.update(lead.id, { status: "calling", liveCallId: r.callId, claimedBy: plan.agentId });
+              claimedThisTick++;
             } catch (e) {
               // claim succeeded but the call didn't - put the lead back in line
               leads.update(lead.id, { status: "queued", queuedAt: Date.now(), claimedBy: undefined });
@@ -310,6 +337,13 @@ export default function Dashboard() {
   }, [leads.items, queueIds]);
   const poolLeads = leads.items.filter((l) => l.status !== "queued" && l.status !== "calling");
 
+  // Panic button: deactivate every active agent in one click. In-flight calls
+  // finish and settle normally (deactivation only stops NEW claims).
+  function stopAll() {
+    activeAgents.forEach((a) => agents.update(a.id, { active: false }));
+    showToast("All agents deactivated - calls in progress will finish and settle.", "info");
+  }
+
   function queueSelected() {
     const chosen = leads.items
       .filter((l) => selLeads.has(l.id) && l.status !== "queued" && l.status !== "calling")
@@ -339,7 +373,12 @@ export default function Dashboard() {
             <div className="text-xs" style={{ color: "var(--text-faint)" }}>Voice AI outreach</div>
           </div>
         </div>
-        <Button size="sm" variant="secondary" onClick={() => setLogOpen(true)}>Call log</Button>
+        <div className="flex items-center gap-2">
+          {activeAgents.length > 0 && (
+            <Button size="sm" variant="danger" onClick={stopAll}>Stop all</Button>
+          )}
+          <Button size="sm" variant="secondary" onClick={() => setLogOpen(true)}>Call log</Button>
+        </div>
       </header>
 
       <div className="mb-4 flex gap-1 rounded-[10px] p-1 sm:hidden" style={{ background: "var(--surface-2)" }}>
