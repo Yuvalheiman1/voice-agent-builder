@@ -9,7 +9,7 @@
   --border-strong: #d7d0ee;
   --text: #1b1730;
   --text-muted: #5d5677;
-  --text-faint: #8b84a5;
+  --text-faint: #766e93; /* a11y: ≥4.5:1 on --surface for 12px secondary text (was #8b84a5 ≈3.5:1) */
   --primary: #6d28d9;
   --primary-hover: #5b21b6;
   --primary-soft: #ede9fe;
@@ -34,7 +34,7 @@
     --border-strong: #3b3358;
     --text: #ece9f6;
     --text-muted: #a49dbe;
-    --text-faint: #736c8d;
+    --text-faint: #8f88ac; /* a11y: ≥4.5:1 on dark --surface (was #736c8d ≈3.4:1) */
     --primary: #a78bfa;
     --primary-hover: #b9a4fb;
     --primary-soft: #241d3b;
@@ -111,4 +111,11 @@ html, body {
 .rise-in { animation: persona-rise 0.2s ease-out both; }
 @media (prefers-reduced-motion: reduce) {
   .rise-in { animation: none; }
+}
+
+/* A11y: visible keyboard focus on every interactive element (mouse clicks stay clean) */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
 }

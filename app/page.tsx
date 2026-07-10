@@ -95,7 +95,7 @@ export default function Dashboard() {
       const res = await fetch("/api/calls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vapiId: agent.vapiId, leads: chosen.map((l) => ({ id: l.id, phone: l.phone })) }),
+        body: JSON.stringify({ vapiId: agent.vapiId, leads: chosen.map((l) => ({ id: l.id, phone: l.phone, email: l.email })) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Call failed");
@@ -290,7 +290,7 @@ export default function Dashboard() {
               const callRes = await fetch("/api/calls", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ vapiId: plan.vapiId, leads: [{ id: lead.id, phone: lead.phone }] }),
+                body: JSON.stringify({ vapiId: plan.vapiId, leads: [{ id: lead.id, phone: lead.phone, email: lead.email }] }),
               });
               const callData = await callRes.json();
               const r = callData.results?.[0];
@@ -424,11 +424,12 @@ export default function Dashboard() {
                             </span>
                           </span>
                         </button>
-                        <span className="flex flex-none items-center gap-0.5 rounded-[8px] px-1 text-xs tabular" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                          <button aria-label="Fewer parallel calls" className="cursor-pointer px-1 py-1"
+                        {/* a11y: −/+ hit areas match the app's 36px control convention (h-9) */}
+                        <span className="flex flex-none items-center rounded-[8px] text-xs tabular" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                          <button aria-label="Fewer parallel calls" className="grid h-9 w-8 cursor-pointer place-items-center text-sm"
                             onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.max(1, (a.maxParallel ?? 1) - 1) }); }}>−</button>
                           <span aria-label={`Parallel calls: ${a.maxParallel ?? 1}`}>∥ {a.maxParallel ?? 1}</span>
-                          <button aria-label="More parallel calls" className="cursor-pointer px-1 py-1"
+                          <button aria-label="More parallel calls" className="grid h-9 w-8 cursor-pointer place-items-center text-sm"
                             onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.min(MAX_PARALLEL_CAP, (a.maxParallel ?? 1) + 1) }); }}>+</button>
                         </span>
                         <Button size="sm" variant="danger" aria-label={`Deactivate ${a.config.name}`}
@@ -467,7 +468,7 @@ export default function Dashboard() {
                   {a.vapiId && (
                     <IconButton label="Test call" onClick={() => setCallAgent(a)}><IconPhone width={16} height={16} /></IconButton>
                   )}
-                  <IconButton label="Delete agent" onClick={() => { agents.remove(a.id); toggle(selAgents, a.id, setSelAgents); }}><IconTrash width={16} height={16} /></IconButton>
+                  <IconButton label="Delete agent" onClick={() => { agents.remove(a.id); setSelAgents((s) => { const n = new Set(s); n.delete(a.id); return n; }); }}><IconTrash width={16} height={16} /></IconButton>
                 </SelectableRow>
               ))}
             </div>
@@ -481,7 +482,7 @@ export default function Dashboard() {
               {selLeads.size > 0 && <Button size="sm" onClick={queueSelected}>Queue {selLeads.size}</Button>}
               <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}><IconUpload width={16} height={16} /> Import</Button>
             </div>} />
-          <QuickAddLead onAdd={(name, phone) => leads.add(makeLead(name, phone))} />
+          <QuickAddLead onAdd={(name, phone, email) => leads.add(makeLead(name, phone, email))} />
           {queueLeads.length > 0 && (
             <div className="mt-3 rounded-[14px] p-3" style={{ background: "var(--primary-soft)", border: "1px solid var(--border-strong)" }}>
               <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--primary)" }}>
@@ -539,7 +540,7 @@ export default function Dashboard() {
                           <span style={{ display: "inline-flex", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}><IconChevron width={16} height={16} /></span>
                         </IconButton>
                       )}
-                      <IconButton label="Delete lead" onClick={() => { leads.remove(l.id); toggle(selLeads, l.id, setSelLeads); }}><IconTrash width={16} height={16} /></IconButton>
+                      <IconButton label="Delete lead" onClick={() => { leads.remove(l.id); setSelLeads((s) => { const n = new Set(s); n.delete(l.id); return n; }); }}><IconTrash width={16} height={16} /></IconButton>
                     </SelectableRow>
                     {open && l.outcome && (
                       <div className="mx-1 mt-1 rounded-[10px] px-3 py-2.5 text-sm" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
@@ -693,15 +694,18 @@ function LeadStatusBadge({ status }: { status: Lead["status"] }) {
   return <Badge tone="muted">new</Badge>;
 }
 
-function QuickAddLead({ onAdd }: { onAdd: (name: string, phone: string) => void }) {
+function QuickAddLead({ onAdd }: { onAdd: (name: string, phone: string, email?: string) => void }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const submit = () => { if (phone.trim()) { onAdd(name, phone); setName(""); setPhone(""); } };
+  const [email, setEmail] = useState("");
+  const submit = () => { if (phone.trim()) { onAdd(name, phone, email); setName(""); setPhone(""); setEmail(""); } };
   return (
     <div className="flex gap-2">
-      <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: "0 0 34%" }} />
+      <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: "0 0 24%" }} />
       <Input placeholder="+1 555 123 4567" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+      <Input placeholder="email (optional)" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") submit(); }} style={{ flex: "0 0 30%" }} />
       <Button size="sm" onClick={submit}><IconPlus width={16} height={16} /></Button>
     </div>
   );
