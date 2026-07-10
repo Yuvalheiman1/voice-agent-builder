@@ -1,8 +1,22 @@
 import { db } from "@/lib/db";
 import { rowToCall, outcomeToCallRow } from "@/lib/rows";
 
-export async function GET() {
+export async function GET(req?: Request) {
   try {
+    // Count mode (?since=<ms>&count=1): head-only count of PHONE calls since a
+    // timestamp - feeds the dialer's daily call cap without shipping rows.
+    const url = req ? new URL(req.url) : null;
+    if (url?.searchParams.get("count") === "1") {
+      const sinceMs = Number(url.searchParams.get("since") ?? 0);
+      const { count, error } = await db()
+        .from("calls")
+        .select("*", { count: "exact", head: true })
+        .gte("created_at", new Date(Number.isFinite(sinceMs) ? sinceMs : 0).toISOString())
+        .eq("type", "phone");
+      if (error) throw new Error(error.message);
+      return Response.json({ count: count ?? 0 });
+    }
+
     const { data, error } = await db().from("calls").select("*")
       .order("created_at", { ascending: false }).limit(200);
     if (error) throw new Error(error.message);

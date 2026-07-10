@@ -23,6 +23,23 @@ describe("GET /api/calls-log", () => {
     expect(mockDb.op("calls", "limit")?.args).toEqual([200]);
   });
 
+  it("count mode: ?since&count=1 returns today's phone-call count, no rows", async () => {
+    mockDb.setResult({ data: null, error: null, count: 7 });
+    const res = await GET(new Request("http://t/api/calls-log?since=1783725000000&count=1"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: 7 });
+    // head-only exact count, filtered to phone calls since the timestamp
+    expect(mockDb.op("calls", "select")?.args?.[1]).toMatchObject({ count: "exact", head: true });
+    expect(mockDb.op("calls", "gte")?.args?.[0]).toBe("created_at");
+    expect(mockDb.op("calls", "eq")?.args).toEqual(["type", "phone"]);
+  });
+
+  it("count mode: DB error → 500", async () => {
+    mockDb.setResult({ data: null, error: { message: "boom" }, count: null });
+    const res = await GET(new Request("http://t/api/calls-log?since=1&count=1"));
+    expect(res.status).toBe(500);
+  });
+
   it("maps a DB error to 500 { error }", async () => {
     mockDb.setResult({ data: null, error: { message: "boom" } });
     const res = await GET();

@@ -6,12 +6,12 @@ import { vi } from "vitest";
 // resolves to a configurable `{ data, error }`, matching how the handlers do
 // `const { error } = await db().from(...).insert(...)`.
 
-export type Result = { data: unknown; error: unknown };
+export type Result = { data: unknown; error: unknown; count?: unknown };
 export type Op = { method: string; args: unknown[] };
 export type Recorded = { table: string; ops: Op[] };
 
 const METHODS = [
-  "select", "order", "eq", "not", "limit",
+  "select", "order", "eq", "not", "limit", "gte",
   "insert", "update", "delete", "upsert",
 ] as const;
 
