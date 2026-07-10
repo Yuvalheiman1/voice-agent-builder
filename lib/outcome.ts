@@ -29,7 +29,9 @@ export const NO_ANSWER_REASONS = new Set([
 function didNotConnect(endedReason?: string): boolean {
   if (!endedReason) return false;
   if (NO_ANSWER_REASONS.has(endedReason)) return true;
-  return /no-answer|voicemail|did-not-answer|busy/.test(endedReason);
+  // call.start.error-* = the call died before ringing (e.g. Twilio refused the
+  // number) - nobody was reached, so it's a no-answer; reason stays visible.
+  return /no-answer|voicemail|did-not-answer|busy/.test(endedReason) || /^call\.start\.error/.test(endedReason);
 }
 
 export function callPhase(call: VapiCallLike): CallPhase {
@@ -100,10 +102,23 @@ export function pollDecision(
   const phase = callPhase(call);
   if (phase === "done" || phase === "failed") return { kind: "settle", phase, outcome: classifyOutcome(call) };
   if (phase === "analyzing") {
-    // Call ended; wait for analysis, but don't wait forever - after the grace,
-    // classify with whatever we have (endedReason drives the label, NOT a blind no-answer).
-    const endedMs = call.endedAt ? Date.parse(call.endedAt) : now;
-    if (now - endedMs > analysisGraceMs) return { kind: "settle", phase, outcome: classifyOutcome(call) };
+    // A call that never started (rejected, busy, transport error) will never
+    // get analysis - Vapi only analyzes conversations. Settle NOW, don't show
+    // "Analyzing…" forever. (Bug: endedAt is null on these, and the old
+    // `endedAt ?? now` fallback restarted the grace clock every tick.)
+    if (!call.startedAt) return { kind: "settle", phase, outcome: classifyOutcome(call) };
+    // Call ended after a real conversation; wait for analysis, but don't wait
+    // forever - after the grace, classify with whatever we have (endedReason
+    // drives the label, NOT a blind no-answer).
+    if (call.endedAt) {
+      if (now - Date.parse(call.endedAt) > analysisGraceMs) {
+        return { kind: "settle", phase, outcome: classifyOutcome(call) };
+      }
+      return { kind: "waiting", phase };
+    }
+    // Ended, started, but no endedAt (rare) - no anchor for the grace clock, so
+    // fall back to total elapsed: past the connect ceiling, settle from real data.
+    if (elapsedMs > connectCeilingMs) return { kind: "settle", phase, outcome: classifyOutcome(call) };
     return { kind: "waiting", phase };
   }
   // queued / ringing - still trying to connect

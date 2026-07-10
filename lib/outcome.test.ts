@@ -73,7 +73,8 @@ describe("pollDecision", () => {
     expect(d.kind === "settle" && d.outcome.label).toBe("booked");
   });
   it("ended but no analysis yet, within grace → waiting", () => {
-    const d = pollDecision({ status: "ended", endedAt: "2026-07-09T14:19:30Z", endedReason: "customer-ended-call" }, 3 * 60 * 1000, NOW);
+    // startedAt present: a real conversation happened (rejected calls never have it)
+    const d = pollDecision({ status: "ended", startedAt: "2026-07-09T14:18:00Z", endedAt: "2026-07-09T14:19:30Z", endedReason: "customer-ended-call" }, 3 * 60 * 1000, NOW);
     expect(d.kind).toBe("waiting");
   });
   it("ended, no analysis, past grace → settle by endedReason (not blind no-answer)", () => {
@@ -88,6 +89,26 @@ describe("pollDecision", () => {
   it("still ringing within the ceiling → waiting", () => {
     const d = pollDecision({ status: "ringing" }, 30 * 1000, NOW);
     expect(d.kind).toBe("waiting");
+  });
+  // Regression: rejected/unanswered calls end with NO startedAt/endedAt and never
+  // get analysis - they must settle immediately, not show "Analyzing…" forever.
+  it("ended without ever starting (rejected) → settles immediately as no-answer", () => {
+    const d = pollDecision({ status: "ended", endedReason: "customer-did-not-answer" }, 40 * 1000, NOW);
+    expect(d.kind).toBe("settle");
+    expect(d.kind === "settle" && d.outcome.label).toBe("no-answer");
+  });
+  it("transport-error call (never started) → settles immediately as no-answer, reason preserved", () => {
+    const d = pollDecision({ status: "ended", endedReason: "call.start.error-get-transport" }, 40 * 1000, NOW);
+    expect(d.kind).toBe("settle");
+    expect(d.kind === "settle" && d.outcome.label).toBe("no-answer");
+    expect(d.kind === "settle" && d.outcome.endedReason).toBe("call.start.error-get-transport");
+  });
+  it("ended with startedAt but missing endedAt → grace anchors to elapsed, then settles from real data", () => {
+    const call = { status: "ended", startedAt: "2026-07-09T14:13:00Z", endedReason: "customer-ended-call" };
+    expect(pollDecision(call, 60 * 1000, NOW).kind).toBe("waiting"); // ceiling not reached - keep waiting
+    const d = pollDecision(call, 7 * 60 * 1000, NOW); // past the ceiling - settle with what we have
+    expect(d.kind).toBe("settle");
+    expect(d.kind === "settle" && d.outcome.label).toBe("not-qualified");
   });
 });
 
