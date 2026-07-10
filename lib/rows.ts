@@ -137,6 +137,15 @@ export function outcomeToCallRow(
   };
 }
 
+// JSON.stringify drops undefined values, so a "clear this field" patch like
+// { liveCallId: undefined } would silently vanish on the wire. Convert
+// undefined → null (which survives JSON and maps to SQL NULL).
+export function toWirePatch<T extends object>(patch: T): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(patch).map(([k, v]) => [k, v === undefined ? null : v]),
+  );
+}
+
 // Latest call row per group key (rows may arrive in any order).
 function latestBy(rows: any[], key: (r: any) => string | null): Map<string, any> {
   const m = new Map<string, any>();

@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   rowToAgent, agentToRow, agentPatchToRow,
   rowToLead, leadToRow, leadPatchToRow,
-  rowToCall, outcomeToCallRow, attachOutcomes, attachLastTest,
+  rowToCall, outcomeToCallRow, attachOutcomes, attachLastTest, toWirePatch,
 } from "./rows";
 import type { Agent, Lead, CallOutcome } from "./types";
 
@@ -47,6 +47,18 @@ describe("call mappers", () => {
     expect(row).toMatchObject({ id: "call_1", vapi_call_id: "vapi-1", agent_id: "agent_1", lead_id: "lead_1", type: "phone", label: "booked", booked: true, qualified: true, duration_sec: 62 });
     const back = rowToCall({ ...row, created_at: new Date(1750000000000).toISOString() });
     expect(back).toMatchObject({ id: "call_1", agentId: "agent_1", leadId: "lead_1", type: "phone", label: "booked", callId: "vapi-1", at: 1750000000000 });
+  });
+});
+
+describe("toWirePatch", () => {
+  it("converts undefined clears to null so JSON keeps them", () => {
+    const wire = toWirePatch({ status: "booked", liveCallId: undefined, claimedBy: undefined });
+    expect(JSON.parse(JSON.stringify(wire))).toEqual({ status: "booked", liveCallId: null, claimedBy: null });
+  });
+  it("regression: plain JSON round-trip DROPS undefined keys (the bug)", () => {
+    const raw = { status: "booked", liveCallId: undefined };
+    expect(JSON.parse(JSON.stringify(raw))).toEqual({ status: "booked" }); // why the fix exists
+    expect(Object.keys(toWirePatch(raw))).toContain("liveCallId");
   });
 });
 

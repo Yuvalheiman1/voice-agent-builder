@@ -106,3 +106,9 @@ html, body {
 .cb-chip { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); border-radius: 999px; padding: 9px 14px; font-size: 13px; min-height: 40px; transition: 0.15s; cursor: pointer; }
 .cb-chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .cb-chip.create { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); font-weight: 600; }
+
+/* Queue / On-duty surfaces - row entrance (motion = "this item moved here") */
+.rise-in { animation: persona-rise 0.2s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .rise-in { animation: none; }
+}

@@ -297,6 +297,19 @@ export default function Dashboard() {
     [agents.items, selAgents],
   );
 
+  // Split lists into their surfaces: activated agents move to "On duty";
+  // queued/calling leads move to the "Call queue" (calling pinned first, then FIFO).
+  const activeAgents = agents.items.filter((a) => a.active);
+  const benchAgents = agents.items.filter((a) => !a.active);
+  const queueLeads = useMemo(() => {
+    const calling = leads.items.filter((l) => l.status === "calling");
+    const queued = queueIds
+      .map((id) => leads.items.find((l) => l.id === id))
+      .filter((l): l is Lead => Boolean(l));
+    return [...calling, ...queued];
+  }, [leads.items, queueIds]);
+  const poolLeads = leads.items.filter((l) => l.status !== "queued" && l.status !== "calling");
+
   function queueSelected() {
     const chosen = leads.items
       .filter((l) => selLeads.has(l.id) && l.status !== "queued" && l.status !== "calling")
@@ -348,8 +361,48 @@ export default function Dashboard() {
               body="Create your first voice AI agent - describe how it should talk, qualify leads, and book meetings."
               cta={<Button onClick={() => setBuilderOpen(true)}><IconSparkles width={16} height={16} /> Create your first agent</Button>} />
           ) : (
+            <>
+              {activeAgents.length > 0 && (
+                <div className="mb-3 rounded-[14px] p-3" style={{ background: "var(--primary-soft)", border: "1px solid var(--border-strong)" }}>
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--primary)" }}>
+                    <span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--primary)" }} />
+                    On duty <span className="tabular">· {activeAgents.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {activeAgents.map((a) => (
+                      <div key={a.id} className="rise-in flex items-center gap-3 rounded-[12px] px-3 py-2.5" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
+                        <button className="flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer" onClick={() => setViewAgent(a)}>
+                          {(() => { const p = getPersona(a.personaId ?? ""); return p ? <AgentAvatar persona={p} size={40} className="flex-none" /> : null; })()}
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-2">
+                              <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
+                              {agentStatus(a.id) === "on-call"
+                                ? <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> {agentLiveCount(a.id) > 1 ? `${agentLiveCount(a.id)} calls` : "On a call"}</Badge>
+                                : <Badge tone="primary">standing by</Badge>}
+                            </span>
+                            <span className="block truncate text-xs" style={{ color: "var(--text-faint)" }}>
+                              {getPersona(a.personaId ?? "")?.tone ?? a.config.voiceId} · up to {a.maxParallel ?? 1} call{(a.maxParallel ?? 1) > 1 ? "s" : ""} at once
+                            </span>
+                          </span>
+                        </button>
+                        <span className="flex flex-none items-center gap-0.5 rounded-[8px] px-1 text-xs tabular" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                          <button aria-label="Fewer parallel calls" className="cursor-pointer px-1 py-1"
+                            onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.max(1, (a.maxParallel ?? 1) - 1) }); }}>−</button>
+                          <span aria-label={`Parallel calls: ${a.maxParallel ?? 1}`}>∥ {a.maxParallel ?? 1}</span>
+                          <button aria-label="More parallel calls" className="cursor-pointer px-1 py-1"
+                            onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.min(MAX_PARALLEL_CAP, (a.maxParallel ?? 1) + 1) }); }}>+</button>
+                        </span>
+                        <Button size="sm" variant="danger" aria-label={`Deactivate ${a.config.name}`}
+                          onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: false }); }}>
+                          Deactivate
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             <div className="space-y-2.5">
-              {agents.items.map((a) => (
+              {benchAgents.map((a) => (
                 <SelectableRow key={a.id} selected={selAgents.has(a.id)} onToggle={() => toggle(selAgents, a.id, setSelAgents)}>
                   <button className="flex min-w-0 flex-1 items-center gap-3 text-left cursor-pointer" onClick={() => setViewAgent(a)}>
                     {(() => { const p = getPersona(a.personaId ?? ""); return p ? <AgentAvatar persona={p} size={44} className="flex-none" /> : null; })()}
@@ -367,22 +420,10 @@ export default function Dashboard() {
                     </span>
                   </button>
                   {a.vapiId && (
-                    <div className="flex flex-none items-center gap-1">
-                      {a.active && (
-                        <span className="flex items-center gap-0.5 rounded-[8px] px-1 text-xs tabular" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                          <button aria-label="Fewer parallel calls" className="cursor-pointer px-1 py-1"
-                            onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.max(1, (a.maxParallel ?? 1) - 1) }); }}>−</button>
-                          <span aria-label={`Parallel calls: ${a.maxParallel ?? 1}`}>∥ {a.maxParallel ?? 1}</span>
-                          <button aria-label="More parallel calls" className="cursor-pointer px-1 py-1"
-                            onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.min(MAX_PARALLEL_CAP, (a.maxParallel ?? 1) + 1) }); }}>+</button>
-                        </span>
-                      )}
-                      <Button size="sm" variant={a.active ? "danger" : "secondary"}
-                        aria-label={a.active ? `Deactivate ${a.config.name}` : `Activate ${a.config.name}`}
-                        onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: !a.active }); }}>
-                        {a.active ? "Deactivate" : "Activate"}
-                      </Button>
-                    </div>
+                    <Button size="sm" variant="secondary" aria-label={`Activate ${a.config.name}`}
+                      onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: true }); }}>
+                      Activate
+                    </Button>
                   )}
                   {a.vapiId && (
                     <IconButton label="Test call" onClick={() => setCallAgent(a)}><IconPhone width={16} height={16} /></IconButton>
@@ -391,6 +432,7 @@ export default function Dashboard() {
                 </SelectableRow>
               ))}
             </div>
+            </>
           )}
         </section>
 
@@ -401,12 +443,41 @@ export default function Dashboard() {
               <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}><IconUpload width={16} height={16} /> Import</Button>
             </div>} />
           <QuickAddLead onAdd={(name, phone) => leads.add(makeLead(name, phone))} />
+          {queueLeads.length > 0 && (
+            <div className="mt-3 rounded-[14px] p-3" style={{ background: "var(--primary-soft)", border: "1px solid var(--border-strong)" }}>
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--primary)" }}>
+                <IconPhone width={12} height={12} /> Call queue <span className="tabular">· {queueLeads.length}</span>
+              </div>
+              <div className="space-y-2">
+                {queueLeads.map((l) => {
+                  const ph = leadPhase(l.id);
+                  const pos = queueIds.indexOf(l.id);
+                  const isCalling = l.status === "calling";
+                  return (
+                    <div key={l.id} className="rise-in flex items-center gap-3 rounded-[12px] px-3 py-2.5" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
+                      <span className="grid h-6 w-6 flex-none place-items-center rounded-full text-xs font-semibold tabular" style={{ background: "var(--primary-soft)", color: "var(--primary)" }}>
+                        {isCalling ? <IconPhone width={12} height={12} /> : pos + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium" style={{ color: "var(--text)" }}>{l.name || l.phone}</div>
+                        <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
+                      </div>
+                      {isCalling ? <LivePhaseBadge phase={ph ?? "queued"} /> : <Badge tone="primary">waiting</Badge>}
+                      {!isCalling && (
+                        <IconButton label="Remove from queue" onClick={() => unqueue(l.id)}><IconX width={16} height={16} /></IconButton>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {leads.items.length === 0 ? (
             <div className="mt-3"><EmptyState icon={<IconUsers width={26} height={26} />} title="No leads yet"
               body="Add a number above, or import a CSV/JSON list of leads to start calling." cta={null} /></div>
           ) : (
             <div className="mt-3 space-y-2.5">
-              {leads.items.map((l) => {
+              {poolLeads.map((l) => {
                 const ph = leadPhase(l.id);
                 const canExpand = Boolean(l.outcome?.summary || l.outcome?.transcript);
                 const open = openLead === l.id;
@@ -422,12 +493,8 @@ export default function Dashboard() {
                         <div className="truncate text-xs tabular" style={{ color: "var(--text-faint)" }}>{l.phone}</div>
                       </div>
                       {ph ? <LivePhaseBadge phase={ph} />
-                        : l.status === "queued" ? <Badge tone="primary">#{queueIds.indexOf(l.id) + 1} in queue</Badge>
                         : settled ? <OutcomeBadge label={l.status as OutcomeLabel} />
                         : <LeadStatusBadge status={l.status} />}
-                      {l.status === "queued" && (
-                        <IconButton label="Remove from queue" onClick={() => unqueue(l.id)}><IconX width={16} height={16} /></IconButton>
-                      )}
                       {canExpand && (
                         <IconButton label={open ? "Hide details" : "Show details"} onClick={() => setOpenLead(open ? null : l.id)}>
                           <span style={{ display: "inline-flex", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}><IconChevron width={16} height={16} /></span>

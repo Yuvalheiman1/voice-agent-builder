@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Agent, CallOutcome, Lead } from "./types";
+import { toWirePatch } from "./rows";
 
 // DB-backed list hook (replaces the old localStorage hook - same interface).
 // Optimistic writes: state updates instantly, the API call runs behind it;
@@ -63,7 +64,9 @@ function useDbList<T extends { id: string }>(endpoint: string, listKey: string) 
 
   const update = useCallback((id: string, patch: Partial<T>) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
-    send(`${endpoint}/${id}`, "PATCH", patch);
+    // toWirePatch: JSON.stringify drops undefined, so "clear this field"
+    // patches (e.g. { liveCallId: undefined }) must go over the wire as null.
+    send(`${endpoint}/${id}`, "PATCH", toWirePatch(patch));
   }, [endpoint, send]);
 
   const remove = useCallback((id: string) => {
