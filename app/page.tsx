@@ -7,6 +7,7 @@ import { VOICES } from "@/lib/assistant-config";
 import { getPersona } from "@/lib/agents";
 import { pollDecision } from "@/lib/outcome";
 import { parseLeadsText, makeLead } from "@/lib/parse-leads";
+import { track } from "@/lib/client-log";
 import { claimSlots, queueOrder, recoveryActions, capAllowance, DAILY_CALL_CAP } from "@/lib/dialer";
 import { Button, Card, Badge, Checkbox, Input, Field, Textarea, OutcomeBadge } from "./components/ui";
 import { IconBot, IconUsers, IconPhone, IconPlus, IconUpload, IconTrash, IconSparkles, IconX, IconChevron } from "./components/icons";
@@ -78,7 +79,31 @@ export default function Dashboard() {
       });
       const data = await res.json();
       if (res.ok && data.id) agents.update(id, { vapiId: data.id });
-    } catch { /* offline / no key - stays local */ }
+      track("agent.pushed", { agentId: id, ok: res.ok, data: { booking: config.booking !== false } });
+    } catch {
+      /* offline / no key - stays local */
+      track("agent.pushed", { agentId: id, ok: false });
+    }
+  }
+
+  // Manual edit from AgentView: persist optimistically, then re-push to Vapi
+  // (a save with no vapiId connects a local agent). Honest split on failure.
+  async function saveEditedAgent(agent: Agent, config: AssistantConfig) {
+    agents.update(agent.id, { config });
+    track("agent.edited", { agentId: agent.id, data: { booking: config.booking !== false } });
+    try {
+      const res = await fetch("/api/assistants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config, vapiId: agent.vapiId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Push failed");
+      if (!agent.vapiId && data.id) agents.update(agent.id, { vapiId: data.id });
+      showToast("Saved - changes are live", "success");
+    } catch (e) {
+      showToast(`Saved locally - push to Vapi failed: ${(e as Error).message}`, "error");
+    }
   }
 
   async function callLeads() {
@@ -95,7 +120,7 @@ export default function Dashboard() {
       const res = await fetch("/api/calls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vapiId: agent.vapiId, leads: chosen.map((l) => ({ id: l.id, phone: l.phone, email: l.email })) }),
+        body: JSON.stringify({ vapiId: agent.vapiId, agentId: agent.id, leads: chosen.map((l) => ({ id: l.id, phone: l.phone, email: l.email })) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Call failed");
@@ -290,7 +315,7 @@ export default function Dashboard() {
               const callRes = await fetch("/api/calls", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ vapiId: plan.vapiId, leads: [{ id: lead.id, phone: lead.phone, email: lead.email }] }),
+                body: JSON.stringify({ vapiId: plan.vapiId, agentId: plan.agentId, leads: [{ id: lead.id, phone: lead.phone, email: lead.email }] }),
               });
               const callData = await callRes.json();
               const r = callData.results?.[0];
@@ -340,8 +365,8 @@ export default function Dashboard() {
   // Panic button: deactivate every active agent in one click. In-flight calls
   // finish and settle normally (deactivation only stops NEW claims).
   function stopAll() {
-    activeAgents.forEach((a) => agents.update(a.id, { active: false }));
-    showToast("All agents deactivated - calls in progress will finish and settle.", "info");
+    activeAgents.forEach((a) => { agents.update(a.id, { active: false }); track("agent.deactivated", { agentId: a.id, data: { via: "stop-all" } }); });
+    showToast("All agents stopped - calls in progress will finish and settle.", "info");
   }
 
   function queueSelected() {
@@ -354,11 +379,12 @@ export default function Dashboard() {
     // now + i keeps multi-select FIFO deterministic (same-ms ties would order arbitrarily)
     chosen.forEach((l, i) => leads.update(l.id, { status: "queued", queuedAt: now + i }));
     setSelLeads(new Set());
-    if (chosen.length) showToast(`Queued ${chosen.length} lead${chosen.length > 1 ? "s" : ""}`, "success");
+    if (chosen.length) { track("queue.added", { data: { count: chosen.length } }); showToast(`Added ${chosen.length} lead${chosen.length > 1 ? "s" : ""} to the call list`, "success"); }
   }
 
   function unqueue(id: string) {
     leads.update(id, { status: "new", queuedAt: undefined });
+    track("queue.removed", { leadId: id });
   }
 
   return (
@@ -426,15 +452,15 @@ export default function Dashboard() {
                         </button>
                         {/* a11y: −/+ hit areas match the app's 36px control convention (h-9) */}
                         <span className="flex flex-none items-center rounded-[8px] text-xs tabular" style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                          <button aria-label="Fewer parallel calls" className="grid h-9 w-8 cursor-pointer place-items-center text-sm"
+                          <button aria-label="Fewer calls at once" className="grid h-9 w-8 cursor-pointer place-items-center text-sm"
                             onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.max(1, (a.maxParallel ?? 1) - 1) }); }}>−</button>
-                          <span aria-label={`Parallel calls: ${a.maxParallel ?? 1}`}>∥ {a.maxParallel ?? 1}</span>
-                          <button aria-label="More parallel calls" className="grid h-9 w-8 cursor-pointer place-items-center text-sm"
+                          <span aria-label={`Calls at once: ${a.maxParallel ?? 1}`}>{a.maxParallel ?? 1} at once</span>
+                          <button aria-label="More calls at once" className="grid h-9 w-8 cursor-pointer place-items-center text-sm"
                             onClick={(e) => { e.stopPropagation(); agents.update(a.id, { maxParallel: Math.min(MAX_PARALLEL_CAP, (a.maxParallel ?? 1) + 1) }); }}>+</button>
                         </span>
-                        <Button size="sm" variant="danger" aria-label={`Deactivate ${a.config.name}`}
-                          onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: false }); }}>
-                          Deactivate
+                        <Button size="sm" variant="danger" aria-label={`Stop ${a.config.name}`}
+                          onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: false }); track("agent.deactivated", { agentId: a.id }); }}>
+                          Stop
                         </Button>
                       </div>
                     ))}
@@ -460,15 +486,15 @@ export default function Dashboard() {
                     </span>
                   </button>
                   {a.vapiId && (
-                    <Button size="sm" variant="secondary" aria-label={`Activate ${a.config.name}`}
-                      onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: true }); }}>
-                      Activate
+                    <Button size="sm" variant="secondary" aria-label={`Start calling with ${a.config.name}`}
+                      onClick={(e) => { e.stopPropagation(); agents.update(a.id, { active: true }); track("agent.activated", { agentId: a.id }); }}>
+                      Start calling
                     </Button>
                   )}
                   {a.vapiId && (
                     <IconButton label="Test call" onClick={() => setCallAgent(a)}><IconPhone width={16} height={16} /></IconButton>
                   )}
-                  <IconButton label="Delete agent" onClick={() => { agents.remove(a.id); setSelAgents((s) => { const n = new Set(s); n.delete(a.id); return n; }); }}><IconTrash width={16} height={16} /></IconButton>
+                  <IconButton label="Delete agent" onClick={() => { agents.remove(a.id); track("agent.deleted", { agentId: a.id }); setSelAgents((s) => { const n = new Set(s); n.delete(a.id); return n; }); }}><IconTrash width={16} height={16} /></IconButton>
                 </SelectableRow>
               ))}
             </div>
@@ -479,14 +505,18 @@ export default function Dashboard() {
         <section className={`min-w-0 ${tab === "leads" ? "block" : "hidden sm:block"}`}>
           <PanelHeader icon={<IconUsers />} title="Leads" count={leads.items.length}
             action={<div className="flex items-center gap-2">
-              {selLeads.size > 0 && <Button size="sm" onClick={queueSelected}>Queue {selLeads.size}</Button>}
+              {selLeads.size > 0 && <Button size="sm" onClick={queueSelected}>Add {selLeads.size} to call list</Button>}
               <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}><IconUpload width={16} height={16} /> Import</Button>
             </div>} />
-          <QuickAddLead onAdd={(name, phone, email) => leads.add(makeLead(name, phone, email))} />
+          <QuickAddLead onAdd={(name, phone, email) => {
+            const l = makeLead(name, phone, email);
+            leads.add(l);
+            track("lead.added", { leadId: l.id, data: { source: "quickadd", hasEmail: !!l.email } });
+          }} />
           {queueLeads.length > 0 && (
             <div className="mt-3 rounded-[14px] p-3" style={{ background: "var(--primary-soft)", border: "1px solid var(--border-strong)" }}>
               <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--primary)" }}>
-                <IconPhone width={12} height={12} /> Call queue <span className="tabular">· {queueLeads.length}</span>
+                <IconPhone width={12} height={12} /> Call list <span className="tabular">· {queueLeads.length}</span>
               </div>
               <div className="space-y-2">
                 {queueLeads.map((l) => {
@@ -504,7 +534,7 @@ export default function Dashboard() {
                       </div>
                       {isCalling ? <LivePhaseBadge phase={ph ?? "queued"} /> : <Badge tone="primary">waiting</Badge>}
                       {!isCalling && (
-                        <IconButton label="Remove from queue" onClick={() => unqueue(l.id)}><IconX width={16} height={16} /></IconButton>
+                        <IconButton label="Remove from call list" onClick={() => unqueue(l.id)}><IconX width={16} height={16} /></IconButton>
                       )}
                     </div>
                   );
@@ -581,12 +611,18 @@ export default function Dashboard() {
         <AgentView
           agent={viewAgent}
           onClose={() => setViewAgent(null)}
-          onDelete={() => { agents.remove(viewAgent.id); setSelAgents((s) => { const n = new Set(s); n.delete(viewAgent.id); return n; }); setViewAgent(null); }}
+          onDelete={() => { agents.remove(viewAgent.id); track("agent.deleted", { agentId: viewAgent.id }); setSelAgents((s) => { const n = new Set(s); n.delete(viewAgent.id); return n; }); setViewAgent(null); }}
           onTestCall={() => { setCallAgent(viewAgent); setViewAgent(null); }}
+          onSaveEdit={(config) => { saveEditedAgent(viewAgent, config); setViewAgent(null); }}
         />
       )}
       {importOpen && (
-        <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => { leads.addMany(ls); setImportOpen(false); showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success"); }} />
+        <ImportModal onClose={() => setImportOpen(false)} onImport={(ls) => {
+          leads.addMany(ls);
+          track("lead.added", { data: { source: "import", count: ls.length, withEmail: ls.filter((l) => l.email).length } });
+          setImportOpen(false);
+          showToast(`Imported ${ls.length} lead${ls.length > 1 ? "s" : ""}`, "success");
+        }} />
       )}
       {callAgent && (
         <CallPanel

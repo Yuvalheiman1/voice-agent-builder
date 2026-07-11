@@ -119,7 +119,9 @@ export default function CallPanel({
     finalizedRef.current = false;
     startedRef.current = true;
     phaseRef.current?.("ringing");
-    vapiRef.current?.start(agent.vapiId);
+    // Web test calls have no lead - "unknown" makes the {{leadEmail}} template
+    // in VOICE_BASELINE trigger the voice-capture protocol instead of rendering empty.
+    vapiRef.current?.start(agent.vapiId, { variableValues: { leadEmail: "unknown" } });
   };
   const stop = () => vapiRef.current?.stop();
 

@@ -41,7 +41,8 @@ To run outreach: select leads → **Queue N** (rows show `#k in queue`), then **
 |----------|---------------|-----------------|
 | `VAPI_API_KEY` | Server: create/update assistants, calls | Vapi dashboard → API Keys (**private**) |
 | `NEXT_PUBLIC_VAPI_PUBLIC_KEY` | Browser: the in-browser web call | Vapi dashboard → API Keys (**public**) |
-| `OPENAI_API_KEY` | Builder chat model (`gpt-4o`) | https://platform.openai.com/api-keys |
+| `OPENAI_API_KEY` | Builder chat LLM | https://platform.openai.com/api-keys |
+| `OPENAI_MODEL` | OpenAI model for the builder chat AND the Vapi voice agent (default `gpt-5.4-nano`) | one-line change; restart `next dev` + re-save existing agents after editing |
 | `RESEND_API_KEY` | Send the booking email | https://resend.com/api-keys |
 | `OPERATOR_EMAIL` | Inbox that receives booking notices | your email |
 | `PUBLIC_BASE_URL` | Public base URL for the Vapi `book_meeting` webhook | your deployed URL, e.g. `https://<project>.vercel.app`. **Set it even for local dev** - if blank, agents saved from localhost push with no webhook and booking silently fails (see gotcha). Restart `next dev` after editing. |

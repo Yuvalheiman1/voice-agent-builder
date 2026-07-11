@@ -107,6 +107,13 @@ html, body {
 .cb-chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .cb-chip.create { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); font-weight: 600; }
 
+/* Live agent card in the builder chat - the config made visible; re-mounts
+   (keyed by config) so the flash marks "the chat just changed your agent". */
+.cb-live { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 9px 16px; font-size: 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); animation: cb-live-flash 0.7s ease; }
+.cb-live-open { flex-basis: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: italic; color: var(--text-faint); }
+@keyframes cb-live-flash { from { background: var(--primary-soft); } to { background: var(--surface-2); } }
+@media (prefers-reduced-motion: reduce) { .cb-live { animation: none; } }
+
 /* Queue / On-duty surfaces - row entrance (motion = "this item moved here") */
 .rise-in { animation: persona-rise 0.2s ease-out both; }
 @media (prefers-reduced-motion: reduce) {

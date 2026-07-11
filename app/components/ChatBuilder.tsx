@@ -3,16 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { AssistantConfig } from "@/lib/types";
 import { PERSONAS, personaToConfig, getPersona, type AgentPersona } from "@/lib/agents";
-import { FLOW, applyChip, type Chip } from "@/lib/builder-flow";
+import type { ChatTurn } from "@/lib/builder-chat";
+import { track, getSessionId } from "@/lib/client-log";
 import AgentAvatar from "./AgentAvatar";
 import VoicePreview from "./VoicePreview";
 import { Button, Input } from "./ui";
 import { IconX, IconCheck, IconArrowLeft } from "./icons";
 
-type Msg = { role: "ai" | "me"; text: string; chips?: Chip[]; showDone?: boolean };
+type Msg = { role: "ai" | "me"; text: string; err?: boolean };
 
-// Persona-first conversational builder: pick a persona (seeds a complete config),
-// then refine by tapping chips (deterministic patches) or typing (→ /api/chat).
+// Persona-first conversational builder: pick a persona (seeds a complete,
+// always-valid config), then the LLM PLAYS that persona - it interviews the
+// operator, updates the config each turn and suggests the next tappable chips.
+// Deterministic parts: persona pick and Create (save). Everything else is LLM.
 export default function ChatBuilder({
   onClose,
   onSave,
@@ -24,85 +27,84 @@ export default function ChatBuilder({
   const [personaId, setPersonaId] = useState<string>();
   const [config, setConfig] = useState<AssistantConfig | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [step, setStep] = useState(0); // index into FLOW; === FLOW.length when done
+  const [chips, setChips] = useState<string[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const chatRef = useRef<HTMLDivElement | null>(null);
+  // Stale-response guard: each request takes a ticket; a response whose ticket
+  // is no longer current (user switched persona mid-flight) is discarded.
+  const reqIdRef = useRef(0);
 
   const persona = getPersona(personaId ?? "");
-  const done = step >= FLOW.length;
-  const last = messages[messages.length - 1];
 
-  useEffect(() => { const c = chatRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages]);
+  useEffect(() => { const c = chatRef.current; if (c) c.scrollTop = c.scrollHeight; }, [messages, busy]);
 
-  function pick(p: AgentPersona) {
-    setPersonaId(p.id);
-    setConfig(personaToConfig(p));
-    setStage("chat");
-    setStep(0);
-    setMessages([{ role: "ai", text: FLOW[0].ask(p.name), chips: FLOW[0].chips }]);
-  }
-
-  function recap(cfg: AssistantConfig): string {
-    const n = cfg.qualificationQuestions.length;
-    return `Perfect - ${cfg.name} is ready: ${n} qualification question${n !== 1 ? "s" : ""}. Tap Create, or keep refining by typing.`;
-  }
-
-  function advance(nextStep: number, name: string, cfg: AssistantConfig) {
-    setStep(nextStep);
-    if (nextStep < FLOW.length) {
-      const s = FLOW[nextStep];
-      setMessages((m) => [...m, { role: "ai", text: s.ask(name), chips: s.chips, showDone: s.multi }]);
-    } else {
-      setMessages((m) => [...m, { role: "ai", text: recap(cfg) }]);
-    }
-  }
-
-  function onChip(chip: Chip) {
-    if (!config || !persona) return;
-    const next = applyChip(config, chip);
-    setConfig(next);
-    setMessages((m) => [...m, { role: "me", text: chip.label }]);
-    const cur = FLOW[step];
-    if (cur?.multi) {
-      setMessages((m) => [...m, { role: "ai", text: `Added. Anything else ${persona.name} should check?`, chips: cur.chips, showDone: true }]);
-    } else {
-      advance(step + 1, persona.name, next);
-    }
-  }
-
-  function onDone() {
-    if (!persona || !config) return;
-    advance(step + 1, persona.name, config);
-  }
-
-  async function sendText() {
-    const t = text.trim();
-    if (!t || !config || !persona || busy) return;
-    setText("");
-    setMessages((m) => [...m, { role: "me", text: t }]);
+  // One path for everything: POST the full history + config; the persona
+  // replies, returns the updated config and the next suggested chips.
+  // `source` (intro|chip|text) rides along for analytics - the server logs the turn.
+  async function callApi(history: Msg[], cfg: AssistantConfig, pid: string, source: "intro" | "chip" | "text") {
+    const rid = ++reqIdRef.current;
     setBusy(true);
     try {
+      // Error bubbles are UI-only - never send them to the LLM as persona speech.
+      const turns: ChatTurn[] = history
+        .filter((m) => !m.err)
+        .map((m) => ({ role: m.role === "me" ? "user" : "assistant", text: m.text }));
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: t, config }),
+        body: JSON.stringify({
+          personaId: pid, messages: turns, config: cfg,
+          sessionId: getSessionId(), turnIndex: turns.length, source,
+        }),
       });
       const data = await res.json();
+      if (rid !== reqIdRef.current) return; // stale - a newer request superseded this one
       if (!res.ok) throw new Error(data.error || "Request failed");
       setConfig(data.config);
-      const cur = FLOW[step];
-      setMessages((m) => [...m, { role: "ai", text: data.summary || "Updated.", chips: cur?.chips, showDone: cur?.multi }]);
+      setMessages((m) => [...m, { role: "ai", text: data.reply }]);
+      setChips(Array.isArray(data.chips) ? data.chips : []);
     } catch (e) {
-      setMessages((m) => [...m, { role: "ai", text: (e as Error).message }]);
+      if (rid !== reqIdRef.current) return;
+      // Keep the previous chips so the operator isn't stranded; typing still works.
+      setMessages((m) => [...m, { role: "ai", text: (e as Error).message, err: true }]);
     } finally {
-      setBusy(false);
+      if (rid === reqIdRef.current) setBusy(false);
     }
+  }
+
+  function pick(p: AgentPersona) {
+    const seeded = personaToConfig(p);
+    setPersonaId(p.id);
+    setConfig(seeded);
+    setStage("chat");
+    setMessages([]);
+    setChips([]);
+    track("builder.persona_picked", { data: { personaId: p.id } });
+    callApi([], seeded, p.id, "intro"); // empty history → the persona introduces itself
+  }
+
+  function send(raw: string, source: "chip" | "text" = "text") {
+    const t = raw.trim();
+    if (!t || !config || !personaId || busy) return;
+    setText("");
+    setChips([]);
+    const next: Msg[] = [...messages, { role: "me", text: t }];
+    setMessages(next);
+    callApi(next, config, personaId, source);
+  }
+
+  // Analytics: fired when the operator leaves a chat without creating the agent.
+  function trackAbandon() {
+    if (stage !== "chat") return;
+    track("builder.abandoned", {
+      data: { personaId, lastTurnIndex: messages.filter((m) => m.role === "ai" && !m.err).length - 1 },
+    });
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      style={{ background: "rgba(6,9,15,0.55)" }} onClick={onClose}>
+      style={{ background: "rgba(6,9,15,0.55)" }} onClick={() => { trackAbandon(); onClose(); }}>
       <div className="flex h-[92dvh] sm:h-auto sm:max-h-[88dvh] w-full sm:max-w-2xl flex-col overflow-hidden rounded-t-[18px] sm:rounded-[16px]"
         style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-md)" }}
         onClick={(e) => e.stopPropagation()}>
@@ -111,7 +113,7 @@ export default function ChatBuilder({
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)" }}>
           <div className="flex min-w-0 items-center gap-3">
             {stage === "chat" && (
-              <button onClick={() => setStage("persona")} aria-label="Back to personas" className="grid h-9 w-9 flex-none place-items-center rounded-full cursor-pointer" style={{ color: "var(--text-muted)" }}>
+              <button onClick={() => { trackAbandon(); setStage("persona"); }} aria-label="Back to personas" className="grid h-9 w-9 flex-none place-items-center rounded-full cursor-pointer" style={{ color: "var(--text-muted)" }}>
                 <IconArrowLeft />
               </button>
             )}
@@ -125,7 +127,7 @@ export default function ChatBuilder({
               </p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="grid h-9 w-9 flex-none place-items-center rounded-full cursor-pointer" style={{ color: "var(--text-muted)" }}>
+          <button onClick={() => { trackAbandon(); onClose(); }} aria-label="Close" className="grid h-9 w-9 flex-none place-items-center rounded-full cursor-pointer" style={{ color: "var(--text-muted)" }}>
             <IconX />
           </button>
         </div>
@@ -159,6 +161,20 @@ export default function ChatBuilder({
           </div>
         ) : (
           <>
+            {config && (
+              // Live agent card: the generated config, visible + flashing on every
+              // change - "you describe it, the system builds it" made demonstrable.
+              <div key={JSON.stringify(config)} className="cb-live">
+                <span style={{ fontWeight: 600, color: "var(--text)" }}>{config.name}</span>
+                <span>·</span>
+                <span>{config.qualificationQuestions.length} question{config.qualificationQuestions.length !== 1 ? "s" : ""}</span>
+                <span>·</span>
+                <span style={config.booking !== false ? { color: "var(--success)", fontWeight: 500 } : undefined}>
+                  {config.booking !== false ? "Books meetings ✓" : "Qualify only"}
+                </span>
+                <span className="cb-live-open">“{config.firstMessage}”</span>
+              </div>
+            )}
             <div ref={chatRef} className="cb-chat">
               {messages.map((m, i) => (
                 <div key={i} className={`cb-msg ${m.role}`}>
@@ -166,27 +182,38 @@ export default function ChatBuilder({
                   <div className="cb-bub">{m.text}</div>
                 </div>
               ))}
+              {busy && persona && (
+                <div className="cb-msg ai">
+                  <div className="flex-none self-end"><AgentAvatar persona={persona} size={28} /></div>
+                  <div className="cb-bub">…</div>
+                </div>
+              )}
             </div>
 
-            {(last?.chips?.length || last?.showDone || done) && (
-              <div className="cb-chips">
-                {last?.chips?.map((c) => (
-                  <button key={c.id} type="button" className="cb-chip" onClick={() => onChip(c)}>{c.label}</button>
-                ))}
-                {last?.showDone && <button type="button" className="cb-chip" onClick={onDone}>Done</button>}
-                {done && (
-                  <button type="button" className="cb-chip create" onClick={() => config && onSave(config, personaId)}>
-                    <IconCheck width={14} height={14} /> Create {persona?.name}
-                  </button>
-                )}
-              </div>
-            )}
+            <div className="cb-chips">
+              {chips.map((c) => (
+                <button key={c} type="button" className="cb-chip" disabled={busy} onClick={() => send(c, "chip")}>{c}</button>
+              ))}
+              <button type="button" className="cb-chip create" disabled={busy || !config}
+                onClick={() => {
+                  if (!config) return;
+                  track("builder.created", { data: {
+                    personaId,
+                    turns: messages.filter((m) => m.role === "me").length,
+                    booking: config.booking !== false,
+                    questions: config.qualificationQuestions.length,
+                  } });
+                  onSave(config, personaId);
+                }}>
+                <IconCheck width={14} height={14} /> Create {persona?.name}
+              </button>
+            </div>
 
             <div className="flex gap-2 px-4 py-3" style={{ borderTop: "1px solid var(--border)", background: "var(--surface)" }}>
               <Input value={text} onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") sendText(); }}
+                onKeyDown={(e) => { if (e.key === "Enter") send(text); }}
                 placeholder="Type anything, or tap a suggestion…" disabled={busy} />
-              <Button size="sm" onClick={sendText} disabled={busy || !text.trim()}>{busy ? "…" : "Send"}</Button>
+              <Button size="sm" onClick={() => send(text)} disabled={busy || !text.trim()}>{busy ? "…" : "Send"}</Button>
             </div>
           </>
         )}

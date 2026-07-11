@@ -19,9 +19,14 @@ export function parseToolCall(body: any): ParsedToolCall[] {
 
 // Lead linkage: the dialer stamps { leadId } into the call's
 // assistantOverrides.metadata at creation; Vapi echoes it back here.
-export function extractCallMeta(body: any): { leadId?: string } {
+// phone (customer number) rides along for the SMS-fallback booking note.
+export function extractCallMeta(body: any): { leadId?: string; phone?: string } {
   const leadId = body?.message?.call?.assistantOverrides?.metadata?.leadId;
-  return typeof leadId === "string" && leadId ? { leadId } : {};
+  const phone = body?.message?.call?.customer?.number;
+  return {
+    ...(typeof leadId === "string" && leadId ? { leadId } : {}),
+    ...(typeof phone === "string" && phone ? { phone } : {}),
+  };
 }
 
 export function parseEndOfCall(body: any) {

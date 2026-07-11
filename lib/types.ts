@@ -4,6 +4,7 @@ export type AssistantConfig = {
   systemPrompt: string;
   voiceId: string;
   qualificationQuestions: string[];
+  booking?: boolean; // false = qualify-only: no book_meeting tool, no email protocol (default true)
 };
 
 export type Agent = {

@@ -48,6 +48,13 @@ describe("extractCallMeta", () => {
     const body = { message: { call: { assistantOverrides: { metadata: { leadId: "lead_9" } } } } };
     expect(extractCallMeta(body)).toEqual({ leadId: "lead_9" });
   });
+  it("reads the customer phone alongside leadId", () => {
+    const body = { message: { call: {
+      assistantOverrides: { metadata: { leadId: "lead_9" } },
+      customer: { number: "+972501234567" },
+    } } };
+    expect(extractCallMeta(body)).toEqual({ leadId: "lead_9", phone: "+972501234567" });
+  });
   it("returns empty object when absent", () => {
     expect(extractCallMeta({})).toEqual({});
     expect(extractCallMeta({ message: { call: {} } })).toEqual({});

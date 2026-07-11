@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Agent, CallOutcome, Lead } from "./types";
 import { toWirePatch } from "./rows";
+import { track } from "./client-log";
 
 // DB-backed list hook (replaces the old localStorage hook - same interface).
 // Optimistic writes: state updates instantly, the API call runs behind it;
@@ -99,6 +100,13 @@ export async function insertCallLog(entry: {
     body: JSON.stringify(entry),
   });
   if (!res.ok) throw new Error((await res.json()).error || "calls-log insert failed");
+  // Analytics: every settled call flows through here (web + phone).
+  track("call.settled", {
+    agentId: entry.agentId ?? undefined,
+    leadId: entry.leadId ?? undefined,
+    callId: entry.outcome.callId,
+    data: { label: entry.outcome.label, type: entry.type, durationSec: entry.outcome.durationSec },
+  });
 }
 
 export function newId(prefix: string): string {

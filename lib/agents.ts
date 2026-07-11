@@ -43,7 +43,7 @@ export const PERSONAS: AgentPersona[] = [
     tone: "Friendly & warm",
     blurb:
       "Bubbly and easy to talk to. Makes people feel at ease instantly and never comes off as pushy - a great first impression.",
-    sampleLine: "Hi! So glad you reached out - mind if I ask what brought you in today?",
+    sampleLine: "Hi, it's Ellie! Did I catch you at an okay time for a quick minute?",
     voiceId: "Layla",
     media: media("ellie"),
     personaPrompt:
@@ -55,7 +55,7 @@ export const PERSONAS: AgentPersona[] = [
     tone: "Professional & sharp",
     blurb:
       "Polished and precise, gets to the point. Asks smart qualifying questions and respects your time.",
-    sampleLine: "Thanks for taking the call. I've got three quick questions to see if we're a fit - sound good?",
+    sampleLine: "Hi, this is Vera. I've got three quick questions to see if we're a fit - sound good?",
     voiceId: "Savannah",
     media: media("vera"),
     personaPrompt:
@@ -67,7 +67,7 @@ export const PERSONAS: AgentPersona[] = [
     tone: "Salty closer",
     blurb:
       "Confident and a little cheeky. Charming but relentless - always driving toward the booking.",
-    sampleLine: "Let's not waste each other's time - you've got the problem, I've got the calendar. Tuesday or Thursday?",
+    sampleLine: "Vince here - I'll keep it short: you've got the problem, I've got the calendar. Tuesday or Thursday?",
     voiceId: "TX3LPaxmHKxFdv7VOQHJ",
     media: media("vince"),
     personaPrompt:
@@ -79,7 +79,7 @@ export const PERSONAS: AgentPersona[] = [
     tone: "Sassy & bold",
     blurb:
       "Playful, quick-witted, with a bit of attitude. Keeps it real and casual - memorable.",
-    sampleLine: "Okay, real talk - you're clearly shopping around. What'd actually make you say yes?",
+    sampleLine: "Hey, it's Remi. Real talk - got ninety seconds? I promise not to waste them.",
     voiceId: "cgSgspJ2msm6clMCkdW9",
     media: media("remi"),
     personaPrompt:
@@ -91,7 +91,7 @@ export const PERSONAS: AgentPersona[] = [
     tone: "Chill & consultative",
     blurb:
       "Calm and curious. Listens more than he pitches and builds trust.",
-    sampleLine: "No pressure at all. I just want to understand what you're solving - walk me through it?",
+    sampleLine: "Hi, Theo here. No pitch, no pressure - I'm just curious what you're solving right now. Walk me through it?",
     voiceId: "Nico",
     media: media("theo"),
     personaPrompt:
@@ -120,5 +120,6 @@ export function personaToConfig(persona: AgentPersona): AssistantConfig {
       "If they are interested and qualified, offer to book a meeting and use the book_meeting tool. Keep it natural.",
     voiceId: persona.voiceId,
     qualificationQuestions: [...DEFAULT_QUALIFICATION_QUESTIONS],
+    booking: true,
   };
 }

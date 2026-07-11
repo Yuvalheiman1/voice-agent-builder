@@ -1,5 +1,7 @@
 import { parseToolCall, parseEndOfCall, extractCallMeta } from "@/lib/webhook";
-import { sendBookingEmail } from "@/lib/email";
+import { sendBookingEmail, isEmailUnconfirmed } from "@/lib/email";
+import { sendFollowUpSms } from "@/lib/sms";
+import { logEvent } from "@/lib/log";
 import { db } from "@/lib/db";
 
 // Vapi server webhook. Handles `tool-calls` (book_meeting → email the operator
@@ -11,14 +13,24 @@ export async function POST(req: Request) {
   const type = body?.message?.type;
 
   if (type === "tool-calls") {
-    const { leadId } = extractCallMeta(body);
+    const { leadId, phone } = extractCallMeta(body);
     const results = [];
     for (const c of parseToolCall(body)) {
       if (c.name === "book_meeting") {
-        const r = await sendBookingEmail(c.args);
+        const unconfirmed = isEmailUnconfirmed(c.args?.email);
+        const r = await sendBookingEmail({ ...c.args, ...(unconfirmed && phone ? { phone } : {}) });
         results.push(r.ok ? { toolCallId: c.id, result: r.detail } : { toolCallId: c.id, error: r.detail });
-        // Best-effort: remember the email the lead stated on the call.
-        if (r.ok && leadId && typeof c.args?.email === "string" && c.args.email) {
+        if (r.ok && unconfirmed && phone) {
+          // The agent promised the lead a text - placeholder until SMS ships (backlog).
+          await sendFollowUpSms(phone, `Booked without email: ${c.args?.name ?? "lead"} at ${c.args?.startTime ?? "?"}`);
+        }
+        await logEvent({
+          type: "webhook.booking", actor: "webhook", leadId, callId: body?.message?.call?.id,
+          ok: r.ok, ...(r.ok ? {} : { error: r.detail }),
+          data: { emailConfirmed: !unconfirmed, smsFallback: r.ok && unconfirmed && !!phone },
+        });
+        // Best-effort: remember the email the lead stated on the call ("unknown" is not an email).
+        if (r.ok && leadId && !unconfirmed && typeof c.args?.email === "string") {
           try {
             await db().from("leads").update({ email: c.args.email }).eq("id", leadId);
           } catch (e) {

@@ -8,11 +8,15 @@ export function normalizePhone(raw: string): string {
   return plus + trimmed.replace(/[^\d]/g, "");
 }
 
-export function makeLead(name: string, phone: string): Lead {
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+export function makeLead(name: string, phone: string, email?: string): Lead {
+  const e = email?.trim();
   return {
     id: newId("lead"),
     name: name.trim() || "Unknown",
     phone: normalizePhone(phone),
+    ...(e && EMAIL_RE.test(e) ? { email: e } : {}),
     status: "new",
     createdAt: Date.now(),
   };
@@ -23,7 +27,7 @@ export function parseLeadsText(text: string): Lead[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
 
-  // Try JSON first: [{ name, phone }, ...] or ["+123", ...]
+  // Try JSON first: [{ name, phone, email? }, ...] or ["+123", ...]
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     try {
       const data = JSON.parse(trimmed);
@@ -32,7 +36,11 @@ export function parseLeadsText(text: string): Lead[] {
         .map((row) => {
           if (typeof row === "string") return makeLead("", row);
           if (row && typeof row === "object")
-            return makeLead(String(row.name ?? row.Name ?? ""), String(row.phone ?? row.Phone ?? row.number ?? ""));
+            return makeLead(
+              String(row.name ?? row.Name ?? ""),
+              String(row.phone ?? row.Phone ?? row.number ?? ""),
+              row.email ?? row.Email ? String(row.email ?? row.Email) : undefined,
+            );
           return null;
         })
         .filter((l): l is Lead => !!l && !!l.phone);
@@ -56,8 +64,10 @@ export function parseLeadsText(text: string): Lead[] {
         (best, c, i) => ((c.replace(/\D/g, "").length > (cols[best]?.replace(/\D/g, "").length ?? 0)) ? i : best),
         0,
       );
-      const name = cols.filter((_, i) => i !== phoneIdx).join(" ");
-      return makeLead(name, cols[phoneIdx]);
+      // An email column is self-identifying; exclude it from the name join.
+      const emailIdx = cols.findIndex((c, i) => i !== phoneIdx && EMAIL_RE.test(c));
+      const name = cols.filter((_, i) => i !== phoneIdx && i !== emailIdx).join(" ");
+      return makeLead(name, cols[phoneIdx], emailIdx >= 0 ? cols[emailIdx] : undefined);
     })
     .filter((l) => !!l.phone);
 }
