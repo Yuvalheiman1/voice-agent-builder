@@ -84,6 +84,31 @@ describe("POST /api/chat - happy path", () => {
   });
 });
 
+describe("POST /api/chat - language pass-through", () => {
+  // The LLM's ConfigSchema deliberately omits `language`, so generateObject
+  // returns a config WITHOUT it. The route must preserve language from the
+  // incoming request config (the LLM must not control it).
+  it("preserves config.language even though the LLM schema omits it", async () => {
+    const { language: _drop, ...configNoLang } = config as typeof config & { language?: string };
+    mockGenerate.mockResolvedValue({
+      object: { reply: "ok", config: { ...configNoLang, systemPrompt: "updated" }, chips: ["a"] },
+    });
+    const res = await post({ ...validBody, config: { ...config, language: "he" } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).config.language).toBe("he");
+  });
+
+  it("does not fabricate a language when the incoming config has none", async () => {
+    const { language: _drop, ...configNoLang } = config as typeof config & { language?: string };
+    mockGenerate.mockResolvedValue({
+      object: { reply: "ok", config: { ...configNoLang, systemPrompt: "updated" }, chips: ["a"] },
+    });
+    const res = await post({ ...validBody, config: configNoLang });
+    expect(res.status).toBe(200);
+    expect((await res.json()).config).not.toHaveProperty("language");
+  });
+});
+
 describe("POST /api/chat - LLM failure", () => {
   it("maps a generateObject error to 500 { error } and logs error.api", async () => {
     mockGenerate.mockRejectedValue(new Error("model exploded"));

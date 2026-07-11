@@ -37,6 +37,9 @@ export async function POST(req: Request) {
       prompt: buildPrompt(config, messages as ChatTurn[]),
     });
     const chips = sanitizeChips(object.chips);
+    // ConfigSchema omits `language` (the LLM must not control it) - preserve it
+    // from the incoming request config so it survives the round-trip.
+    const resultConfig = { ...object.config, ...(config.language ? { language: config.language } : {}) };
 
     const lastUser = [...(messages as ChatTurn[])].reverse().find((m) => m.role === "user");
     await logEvent({
@@ -56,7 +59,7 @@ export async function POST(req: Request) {
       },
     });
 
-    return Response.json({ ...object, chips });
+    return Response.json({ ...object, config: resultConfig, chips });
   } catch (e) {
     await logEvent({
       type: "error.api", actor: "system", sessionId, ok: false,
