@@ -39,17 +39,36 @@ const EMAIL_BOOKING = `Email protocol (for the calendar invite):
 Booking:
 - Confirm the agreed date and time out loud before calling book_meeting.`;
 
+// Hebrew agents: hard language rule + booking protocol WITHOUT voice email
+// capture (mixed Hebrew/Latin STT is unreliable - spec decision: email on
+// file or the SMS fallback).
+const HEBREW_RULES = `כללי שפה (חובה):
+- דבר/י עברית בלבד לאורך כל השיחה. לעולם אל תעבור/י לאנגלית, גם אם הלקוח משלב מילים באנגלית.
+- The qualification questions below may be written in English - ask them in natural, native Hebrew.
+- אמור/אמרי מספרים ושעות במילים בעברית (למשל "שלוש וחצי", לא "3:30").`;
+
+const EMAIL_BOOKING_HE = `פרוטוקול אימייל (להזמנה ליומן):
+- האימייל של הליד במערכת: "{{leadEmail}}".
+- אם זו כתובת אמיתית: אל תבקש/י אותה שוב. אשר/י פעם אחת בקצרה: "אשלח את הזימון למייל שיש לנו במערכת - עדיין רלוונטי?".
+- אם היא "unknown" או ריקה: אל תנסה/י לקלוט אימייל בשיחה. אמור/אמרי "נשלח לך הודעת טקסט למספר הזה עם כל הפרטים", וקרא/י ל-book_meeting עם email שווה "unknown".
+- לעולם אל תנחש/י או תמציא/י אימייל.
+
+קביעת פגישה:
+- אשר/י בקול את התאריך והשעה שסוכמו לפני הקריאה ל-book_meeting.`;
+
 // Pure prompt composition (exported for tests). booking !== false so agents
 // saved before the flag existed keep their booking behavior.
 export function composeCallPrompt(c: AssistantConfig, today: string): string {
   const booking = c.booking !== false;
+  const hebrew = c.language === "he";
   const dateLine = booking
     ? `Today's date is ${today}. When booking a meeting, always choose a time in the future relative to today and pass startTime as an ISO 8601 datetime.`
     : `Today's date is ${today}.`;
   return [
     c.systemPrompt,
+    ...(hebrew ? [HEBREW_RULES] : []),
     VOICE_CORE,
-    ...(booking ? [EMAIL_BOOKING] : []),
+    ...(booking ? [hebrew ? EMAIL_BOOKING_HE : EMAIL_BOOKING] : []),
     dateLine,
     `Qualification questions:\n${c.qualificationQuestions.map((q) => `- ${q}`).join("\n")}`,
   ].join("\n\n");
@@ -57,7 +76,8 @@ export function composeCallPrompt(c: AssistantConfig, today: string): string {
 
 // Build a Vapi assistant payload from our config. `any` for the SDK payload:
 // Vapi's DTO is large and evolving - see https://github.com/VapiAI/docs.
-function toVapiAssistant(c: AssistantConfig): any {
+// Exported for tests.
+export function toVapiAssistant(c: AssistantConfig): any {
   // Inject today's date (at push time) so the agent stops hallucinating past
   // dates (e.g. 2023) and books real future times.
   const booking = c.booking !== false;
@@ -96,6 +116,12 @@ function toVapiAssistant(c: AssistantConfig): any {
         : {}),
     },
     voice: resolveVoice(c.voiceId),
+    ...(c.language === "he"
+      ? {
+          transcriber: { provider: "deepgram", model: "nova-3", language: "he" },
+          startSpeakingPlan: { smartEndpointingPlan: { provider: "vapi" } },
+        }
+      : {}),
     serverMessages: ["end-of-call-report", "tool-calls"],
     // Post-call analysis: ask Vapi's extractor for clean outcome fields, read from
     // call.analysis.structuredData by lib/outcome.ts (both web + lead paths).
