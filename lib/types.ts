@@ -5,6 +5,7 @@ export type AssistantConfig = {
   voiceId: string;
   qualificationQuestions: string[];
   booking?: boolean; // false = qualify-only: no book_meeting tool, no email protocol (default true)
+  language?: "en" | "he"; // agent call language (default "en"); drives transcriber/prompt/voice rules at push time
 };
 
 export type Agent = {
