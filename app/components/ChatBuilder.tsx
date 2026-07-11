@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AssistantConfig } from "@/lib/types";
-import { PERSONAS, personaToConfig, getPersona, type AgentPersona } from "@/lib/agents";
+import { PERSONAS_BY_LANG, personaToConfig, getPersona, type AgentPersona } from "@/lib/agents";
 import type { ChatTurn } from "@/lib/builder-chat";
 import { track, getSessionId } from "@/lib/client-log";
 import AgentAvatar from "./AgentAvatar";
@@ -23,7 +23,8 @@ export default function ChatBuilder({
   onClose: () => void;
   onSave: (config: AssistantConfig, personaId?: string) => void;
 }) {
-  const [stage, setStage] = useState<"persona" | "chat">("persona");
+  const [stage, setStage] = useState<"language" | "persona" | "chat">("language");
+  const [lang, setLang] = useState<"en" | "he">("en");
   const [personaId, setPersonaId] = useState<string>();
   const [config, setConfig] = useState<AssistantConfig | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -117,13 +118,18 @@ export default function ChatBuilder({
                 <IconArrowLeft />
               </button>
             )}
+            {stage === "persona" && (
+              <button onClick={() => setStage("language")} aria-label="Back to language" className="grid h-9 w-9 flex-none place-items-center rounded-full cursor-pointer" style={{ color: "var(--text-muted)" }}>
+                <IconArrowLeft />
+              </button>
+            )}
             {stage === "chat" && persona && <AgentAvatar persona={persona} size={36} className="flex-none" />}
             <div className="min-w-0">
               <h2 className="truncate text-base font-semibold" style={{ color: "var(--text)" }}>
-                {stage === "persona" ? "Choose your agent" : persona?.name}
+                {stage === "language" ? "Choose language" : stage === "persona" ? "Choose your agent" : persona?.name}
               </h2>
               <p className="text-xs" style={{ color: "var(--text-faint)" }}>
-                {stage === "persona" ? "Pick a persona - this sets its voice & style." : "Building your agent"}
+                {stage === "language" ? "The language your agent will speak on calls." : stage === "persona" ? "Pick a persona - this sets its voice & style." : "Building your agent"}
               </p>
             </div>
           </div>
@@ -132,10 +138,25 @@ export default function ChatBuilder({
           </button>
         </div>
 
-        {stage === "persona" ? (
+        {stage === "language" ? (
+          <div className="flex flex-1 items-center justify-center gap-4 px-5 py-10">
+            {([
+              { code: "en" as const, flag: "🇺🇸", title: "English", sub: "Agent speaks English on calls" },
+              { code: "he" as const, flag: "🇮🇱", title: "עברית", sub: "הסוכן ידבר עברית בשיחות" },
+            ]).map((o) => (
+              <button key={o.code} type="button" aria-label={`Create ${o.code === "he" ? "a Hebrew" : "an English"} agent`}
+                onClick={() => { setLang(o.code); setStage("persona"); }}
+                className="persona-card flex w-40 flex-col items-center gap-2 rounded-[20px] px-4 py-8 cursor-pointer">
+                <span className="text-4xl" aria-hidden>{o.flag}</span>
+                <span className="text-base font-semibold" style={{ color: "var(--text)" }}>{o.title}</span>
+                <span className="text-xs" style={{ color: "var(--text-faint)" }} dir="auto">{o.sub}</span>
+              </button>
+            ))}
+          </div>
+        ) : stage === "persona" ? (
           <div className="flex-1 overflow-y-auto px-5 py-4">
             <div className="grid grid-cols-2 gap-3.5">
-              {PERSONAS.map((p) => (
+              {PERSONAS_BY_LANG(lang).map((p) => (
                 <div
                   key={p.id}
                   role="button"
@@ -150,11 +171,11 @@ export default function ChatBuilder({
                   </div>
                   <AgentAvatar persona={p} className="w-full" />
                   <span className="relative z-[2] mx-auto -mt-[26px] max-w-[90%] rounded-[12px] px-3.5 py-2 text-[13px] font-semibold leading-tight"
-                    style={{ background: "var(--ink)", color: "#fff", boxShadow: "0 6px 18px rgba(0,0,0,.22)" }}>
+                    style={{ background: "var(--ink)", color: "#fff", boxShadow: "0 6px 18px rgba(0,0,0,.22)" }} dir="auto">
                     {p.name}
                   </span>
                   <span className="mt-2 text-xs font-medium" style={{ color: "var(--primary)" }}>{p.tone}</span>
-                  <span className="mt-1.5 text-xs leading-snug" style={{ color: "var(--text-faint)" }}>{p.blurb}</span>
+                  <span className="mt-1.5 text-xs leading-snug" style={{ color: "var(--text-faint)" }} dir="auto">{p.blurb}</span>
                 </div>
               ))}
             </div>
