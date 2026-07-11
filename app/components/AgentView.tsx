@@ -55,7 +55,10 @@ export default function AgentView({
           <div className="flex min-w-0 items-center gap-3">
             {persona ? <AgentAvatar persona={persona} size={44} className="flex-none" /> : null}
             <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold" style={{ color: "var(--text)" }}>{agent.config.name}</h2>
+              <h2 className="flex items-center gap-2 text-base font-semibold" style={{ color: "var(--text)" }}>
+                <span className="truncate">{agent.config.name}</span>
+                {agent.config.language === "he" && <span aria-label="Hebrew agent" title="Hebrew agent">🇮🇱</span>}
+              </h2>
               <div className="mt-0.5">{agent.vapiId ? <Badge tone="success">connected</Badge> : <Badge tone="muted">local</Badge>}</div>
             </div>
           </div>

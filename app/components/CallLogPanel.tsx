@@ -65,8 +65,8 @@ export default function CallLogPanel({ agents, leads, onClose }: {
                 {expanded && (
                   <div className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
                     {c.reason && <p className="mb-1 text-xs font-medium" style={{ color: "var(--primary)" }}>{c.reason}</p>}
-                    {c.summary && <p>{c.summary}</p>}
-                    {c.transcript && <pre className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap text-xs" style={{ fontFamily: "inherit" }}>{c.transcript}</pre>}
+                    {c.summary && <p dir="auto">{c.summary}</p>}
+                    {c.transcript && <pre dir="auto" className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap text-xs" style={{ fontFamily: "inherit" }}>{c.transcript}</pre>}
                   </div>
                 )}
               </div>

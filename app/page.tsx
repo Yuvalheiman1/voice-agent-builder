@@ -441,6 +441,7 @@ export default function Dashboard() {
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-2">
                               <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
+                              {a.config.language === "he" && <span aria-label="Hebrew agent" title="Hebrew agent">🇮🇱</span>}
                               {agentStatus(a.id) === "on-call"
                                 ? <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> {agentLiveCount(a.id) > 1 ? `${agentLiveCount(a.id)} calls` : "On a call"}</Badge>
                                 : <Badge tone="primary">standing by</Badge>}
@@ -475,6 +476,7 @@ export default function Dashboard() {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className="truncate font-medium" style={{ color: "var(--text)" }}>{a.config.name}</span>
+                        {a.config.language === "he" && <span aria-label="Hebrew agent" title="Hebrew agent">🇮🇱</span>}
                         {agentStatus(a.id) === "on-call"
                           ? <Badge tone="live"><span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: "var(--live)" }} /> {agentLiveCount(a.id) > 1 ? `${agentLiveCount(a.id)} calls` : "On a call"}</Badge>
                           : a.active ? <Badge tone="primary">active</Badge>
@@ -574,8 +576,8 @@ export default function Dashboard() {
                     </SelectableRow>
                     {open && l.outcome && (
                       <div className="mx-1 mt-1 rounded-[10px] px-3 py-2.5 text-sm" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                        {l.outcome.reason && <p className="mb-1 text-xs font-medium" style={{ color: "var(--primary)" }}>{l.outcome.reason}</p>}
-                        {l.outcome.summary && <p style={{ color: "var(--text-muted)" }}>{l.outcome.summary}</p>}
+                        {l.outcome.reason && <p dir="auto" className="mb-1 text-xs font-medium" style={{ color: "var(--primary)" }}>{l.outcome.reason}</p>}
+                        {l.outcome.summary && <p dir="auto" style={{ color: "var(--text-muted)" }}>{l.outcome.summary}</p>}
                         {l.outcome.transcript && <TranscriptToggle text={l.outcome.transcript} />}
                       </div>
                     )}
@@ -716,7 +718,7 @@ function TranscriptToggle({ text }: { text: string }) {
         {open ? "▾" : "▸"} Transcript ({lines.length} line{lines.length !== 1 ? "s" : ""})
       </button>
       {open && (
-        <pre className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap text-xs" style={{ color: "var(--text-muted)", fontFamily: "inherit" }}>{text}</pre>
+        <pre dir="auto" className="mt-1.5 max-h-56 overflow-y-auto whitespace-pre-wrap text-xs" style={{ color: "var(--text-muted)", fontFamily: "inherit" }}>{text}</pre>
       )}
     </div>
   );
