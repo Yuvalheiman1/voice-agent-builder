@@ -63,6 +63,7 @@ export function freeSlots(s: BookingSettings, takenISO: string[], now: number): 
 export function isValidSlot(s: BookingSettings, startTime: string, now: number): boolean {
   const t = Date.parse(startTime);
   if (Number.isNaN(t) || t < now + MIN_NOTICE_MS) return false;
+  if (t > now + HORIZON_DAYS * DAY_MS) return false;
   const p = partsIn(s.timezone, t);
   if (!s.workDays.includes(p.wd)) return false;
   const mins = p.h * 60 + p.mi;
@@ -76,8 +77,29 @@ export function isValidSlot(s: BookingSettings, startTime: string, now: number):
 // startTime the agent must pass to book_meeting VERBATIM - removes all
 // timezone/parsing ambiguity (a bare "2026-07-13T10:00" would be parsed in the
 // server's timezone, not the operator's).
+const MAX_PER_DAY = 3;
+
+// Walk the (chronologically sorted) slots and take up to MAX_OFFERED, capped
+// at MAX_PER_DAY per calendar day (day = the tz wall-clock date, matching what
+// renderSlots displays) - spreads the offer across the nearest 2-3 days
+// instead of exhausting the whole cap on day one.
+function selectSpread(slotsISO: string[], tz: string): string[] {
+  const chosen: string[] = [];
+  const perDay = new Map<string, number>();
+  for (const iso of slotsISO) {
+    if (chosen.length >= MAX_OFFERED) break;
+    const p = partsIn(tz, Date.parse(iso));
+    const key = `${p.y}-${p.mo}-${p.d}`;
+    const count = perDay.get(key) ?? 0;
+    if (count >= MAX_PER_DAY) continue;
+    perDay.set(key, count + 1);
+    chosen.push(iso);
+  }
+  return chosen;
+}
+
 export function renderSlots(slotsISO: string[], language: "en" | "he", tz: string): string {
-  const chosen = slotsISO.slice(0, MAX_OFFERED);
+  const chosen = selectSpread(slotsISO, tz);
   if (chosen.length === 0) return language === "he" ? "אין זמנים פנויים השבוע." : "No open times this week.";
   const locale = language === "he" ? "he-IL" : "en-US";
   return chosen

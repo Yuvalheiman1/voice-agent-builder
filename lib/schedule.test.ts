@@ -54,6 +54,12 @@ describe("isValidSlot", () => {
     expect(isValidSlot(S, "tomorrow at noonish", NOW)).toBe(false);
     expect(isValidSlot(S, "", NOW)).toBe(false);
   });
+  it("rejects an on-grid work-day slot beyond the booking horizon", () => {
+    expect(isValidSlot(S, "2026-08-11T06:00:00.000Z", NOW)).toBe(false); // 30 days out, Tuesday 09:00 IDT
+  });
+  it("accepts the last day still inside the horizon", () => {
+    expect(isValidSlot(S, "2026-07-16T06:00:00.000Z", NOW)).toBe(true); // Thursday, within 7 days of NOW
+  });
 });
 
 describe("renderSlots", () => {
@@ -72,5 +78,17 @@ describe("renderSlots", () => {
   it("says the calendar is empty when there are no slots", () => {
     expect(renderSlots([], "en", S.timezone)).toBe("No open times this week.");
     expect(renderSlots([], "he", S.timezone)).toBe("אין זמנים פנויים השבוע.");
+  });
+  it("spreads offered slots across days instead of clustering on day one", () => {
+    const text = renderSlots(slots, "en", S.timezone);
+    expect(text).toContain("Sunday");
+    expect(text).toContain("Monday");
+    expect(text).toContain("Tuesday");
+    const sundayLines = text.split("\n").filter((line) => line.includes("Sunday"));
+    expect(sundayLines.length).toBe(3);
+  });
+  it("does not pad when fewer slots than the cap are available", () => {
+    const text = renderSlots(slots.slice(0, 2), "en", S.timezone);
+    expect(text.split("\n").length).toBe(2);
   });
 });
