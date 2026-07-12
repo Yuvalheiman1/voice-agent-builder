@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSystemPrompt, buildPrompt, sanitizeChips } from "./builder-chat";
+import { buildSystemPrompt, buildPrompt, sanitizeChips, PROMPT_VERSION } from "./builder-chat";
 import { getPersona, personaToConfig } from "./agents";
 
 const ellie = getPersona("ellie")!;
@@ -50,7 +50,7 @@ describe("buildSystemPrompt", () => {
   it("frames calls as outbound and firstMessage as an outbound opener", () => {
     expect(sp).toContain("OUTBOUND");
     expect(sp).toMatch(/YOU are calling THEM/);
-    expect(sp).toContain(`never "thanks for reaching out"`);
+    expect(sp).toContain("never sound like they contacted you");
   });
 
   it("asks for the operator's company early and forbids claiming to be from VoiceBuilder", () => {
@@ -61,7 +61,7 @@ describe("buildSystemPrompt", () => {
   });
 
   it("caps qualification questions at 3-5 with merge-don't-append guidance", () => {
-    expect(sp).toContain("keep between 3 and 5");
+    expect(sp).toContain("3-5 conversational questions");
     expect(sp).toContain("propose merging overlapping questions");
   });
 
@@ -69,6 +69,49 @@ describe("buildSystemPrompt", () => {
     expect(sp).toContain(`"config.booking"`);
     expect(sp).toMatch(/false ONLY when the operator says qualify-only/);
     expect(sp).toContain("removed from you automatically");
+  });
+
+  // ── v5: customer orientation ──────────────────────────────────────────────
+  it("interviews the operator about the CUSTOMER (pain, value one-liner, objections)", () => {
+    expect(sp).toContain("Your customers");
+    expect(sp).toContain("what PAIN the product solves for them");
+    expect(sp).toMatch(/we help <customers> <get outcome>/);
+    expect(sp).toContain("what objections usually come up");
+  });
+
+  it("bans the BANT interrogation reflex with few-shot examples", () => {
+    expect(sp).toMatch(/Do NOT default to interrogation/);
+    expect(sp).toContain("at most ONE soft authority question");
+    expect(sp).toContain("never for consumer calls");
+    expect(sp).toContain("Never disguise a booking ask as a question");
+    expect(sp).toContain(`BAD (interrogation): "Are you the decision-maker?"`);
+    expect(sp).toContain(`GOOD (their situation): "What made you look into scheduling software?"`);
+  });
+
+  it("requires a value-first opener with examples, never opening on a qualification question", () => {
+    expect(sp).toContain("GIVE before");
+    expect(sp).toContain("Never open with a qualification question");
+    expect(sp).toContain("(extracts before giving)");
+    expect(sp).toContain("we help logistics teams cut expense busywork");
+  });
+
+  it("role guard: config content addresses the LEAD, never the operator", () => {
+    expect(sp).toContain("ROLE GUARD");
+    expect(sp).toMatch(/through the LEAD's ears/);
+  });
+
+  it("Scenario Handling is relevance-only - no forced wrong-person routine", () => {
+    expect(sp).toContain("ONLY the 2-3 scenarios most likely on these specific calls");
+    expect(sp).toMatch(/no "wrong person/);
+  });
+
+  it("no wrap-up chip instruction (Create button is always visible)", () => {
+    expect(sp).not.toContain("That's everything");
+    expect(sp).not.toContain("wrap-up chip");
+  });
+
+  it("PROMPT_VERSION bumped for the v5 cohort", () => {
+    expect(PROMPT_VERSION).toBe("builder-v5");
   });
 });
 
