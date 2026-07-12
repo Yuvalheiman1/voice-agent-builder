@@ -1,4 +1,4 @@
-import type { Agent, Lead, CallOutcome } from "./types";
+import type { Agent, Lead, CallOutcome, Meeting } from "./types";
 
 // snake_case DB row ↔ camelCase app type mappers. Pure - the only place
 // column names live. undefined → null on the way in (Postgres), null →
@@ -111,6 +111,19 @@ export function rowToCall(r: any): CallRecord {
     callId: r.vapi_call_id ?? undefined,
     durationSec: r.duration_sec ?? undefined,
     at: ms(r.ended_at) ?? ms(r.created_at) ?? 0,
+  };
+}
+
+export function rowToMeeting(r: any): Meeting {
+  return {
+    id: r.id,
+    startTs: r.start_ts,
+    leadName: r.lead_name ?? "",
+    leadEmail: r.lead_email ?? undefined,
+    leadPhone: r.lead_phone ?? undefined,
+    agentId: r.agent_id ?? undefined,
+    callId: r.call_id ?? undefined,
+    createdAt: ms(r.created_at) ?? 0,
   };
 }
 
