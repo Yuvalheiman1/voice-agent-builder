@@ -104,7 +104,7 @@ export default function CallPanel({
     };
   }, []);
 
-  const start = () => {
+  const start = async () => {
     if (!agent.vapiId) {
       setError("This agent isn't saved to Vapi yet.");
       setStatus("error");
@@ -121,7 +121,15 @@ export default function CallPanel({
     phaseRef.current?.("ringing");
     // Web test calls have no lead - "unknown" makes the {{leadEmail}} template
     // in VOICE_BASELINE trigger the voice-capture protocol instead of rendering empty.
-    vapiRef.current?.start(agent.vapiId, { variableValues: { leadEmail: "unknown" } });
+    // Slots come from the same source as real dials; fail-closed on error (agent
+    // sees "No open times" and won't book).
+    let availableSlots = "No open times this week.";
+    try {
+      const res = await fetch(`/api/availability?language=${agent.config.language ?? "en"}`);
+      const j = await res.json();
+      if (res.ok && typeof j.text === "string") availableSlots = j.text;
+    } catch { /* fail-closed */ }
+    vapiRef.current?.start(agent.vapiId, { variableValues: { leadEmail: "unknown", availableSlots } });
   };
   const stop = () => vapiRef.current?.stop();
 
