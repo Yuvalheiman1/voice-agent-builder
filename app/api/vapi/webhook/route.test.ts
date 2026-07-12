@@ -22,13 +22,14 @@ vi.mock("@/lib/booking", () => ({ bookSlot: (...args: unknown[]) => bookSlotMock
 import { POST } from "./route";
 
 // Real nested Vapi shape: function.name + JSON-string arguments.
-const toolCallBody = (args: Record<string, unknown>, meta?: { leadId?: string; phone?: string }) => ({
+const toolCallBody = (args: Record<string, unknown>, meta?: { leadId?: string; phone?: string; assistantId?: string }) => ({
   message: {
     type: "tool-calls",
     toolCallList: [{ id: "tc1", type: "function", function: { name: "book_meeting", arguments: JSON.stringify(args) } }],
     call: {
       ...(meta?.leadId ? { assistantOverrides: { metadata: { leadId: meta.leadId } } } : {}),
       ...(meta?.phone ? { customer: { number: meta.phone } } : {}),
+      ...(meta?.assistantId ? { assistantId: meta.assistantId } : {}),
     },
   },
 });
@@ -128,6 +129,32 @@ describe("book_meeting availability guard", () => {
     mockSendEmail.mockResolvedValue({ ok: false, detail: "smtp down" });
     const res = await post(toolCallBody({ name: "Dana", email: "d@x.com", startTime: "2026-07-13T06:00:00.000Z" }));
     const json = await res.json();
+    expect(json.results[0].result).toContain("Booked");
+  });
+
+  it("agent linkage: resolves agents by vapi_id and passes agentId to bookSlot", async () => {
+    mockDb.setResolver((rec) =>
+      rec.table === "agents" ? { data: { id: "a1" }, error: null } : { data: null, error: null },
+    );
+    await post(toolCallBody(
+      { name: "Dana", email: "d@x.com", startTime: "2026-07-13T06:00:00.000Z" },
+      { assistantId: "vapi_asst_1" },
+    ));
+    expect(mockDb.op("agents", "eq")?.args).toEqual(["vapi_id", "vapi_asst_1"]);
+    expect(bookSlotMock).toHaveBeenCalledWith(expect.objectContaining({ agentId: "a1" }));
+  });
+
+  it("agent linkage is best-effort: a throwing agents lookup still books successfully", async () => {
+    mockDb.setResolver((rec) => {
+      if (rec.table === "agents") throw new Error("agents lookup down");
+      return { data: null, error: null };
+    });
+    const res = await post(toolCallBody(
+      { name: "Dana", email: "d@x.com", startTime: "2026-07-13T06:00:00.000Z" },
+      { assistantId: "vapi_asst_1" },
+    ));
+    const json = await res.json();
+    expect(bookSlotMock).toHaveBeenCalledWith(expect.objectContaining({ agentId: undefined }));
     expect(json.results[0].result).toContain("Booked");
   });
 });
