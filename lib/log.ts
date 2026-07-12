@@ -23,6 +23,8 @@ export const EVENT_TYPES = [
   "call.started",
   "call.settled",
   "webhook.booking",
+  "meeting.booked",
+  "meeting.conflict",
   "error.api",
 ] as const;
 

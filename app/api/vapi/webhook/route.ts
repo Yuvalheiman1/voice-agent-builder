@@ -3,6 +3,7 @@ import { sendBookingEmail, isEmailUnconfirmed } from "@/lib/email";
 import { sendFollowUpSms } from "@/lib/sms";
 import { logEvent } from "@/lib/log";
 import { db } from "@/lib/db";
+import { bookSlot } from "@/lib/booking";
 
 // Vapi server webhook. Handles `tool-calls` (book_meeting → email the operator
 // via Resend) and `end-of-call-report` (log the outcome). Always returns HTTP 200
@@ -17,15 +18,48 @@ export async function POST(req: Request) {
     const results = [];
     for (const c of parseToolCall(body)) {
       if (c.name === "book_meeting") {
+        const callId = body?.message?.call?.id;
+        // Best-effort linkage: map the Vapi assistant back to our agent row.
+        let agentId: string | undefined;
+        try {
+          const vapiAssistantId = body?.message?.call?.assistantId;
+          if (vapiAssistantId) {
+            const { data } = await db().from("agents").select("id").eq("vapi_id", vapiAssistantId).maybeSingle();
+            agentId = data?.id ?? undefined;
+          }
+        } catch { /* linkage only - booking works without it */ }
+
+        // Slot first (atomic guard), email second: the email is a notification,
+        // its failure must never un-book a secured slot.
+        const booked = await bookSlot({
+          name: c.args?.name, email: c.args?.email, startTime: c.args?.startTime,
+          leadPhone: phone, agentId, callId,
+        });
+        if (!booked.ok) {
+          results.push({ toolCallId: c.id, result: booked.sayToLead });
+          await logEvent({
+            type: "meeting.conflict", actor: "webhook", leadId, agentId, callId,
+            ok: false, error: booked.kind, data: { startTime: c.args?.startTime ?? null },
+          });
+          continue;
+        }
+
         const unconfirmed = isEmailUnconfirmed(c.args?.email);
         const r = await sendBookingEmail({ ...c.args, ...(unconfirmed && phone ? { phone } : {}) });
-        results.push(r.ok ? { toolCallId: c.id, result: r.detail } : { toolCallId: c.id, error: r.detail });
+        results.push({
+          toolCallId: c.id,
+          result: `Booked ${booked.startISO}. ${r.ok ? r.detail : "(operator email failed - logged)"}`,
+        });
         if (r.ok && unconfirmed && phone) {
           // The agent promised the lead a text - placeholder until SMS ships (backlog).
-          await sendFollowUpSms(phone, `Booked without email: ${c.args?.name ?? "lead"} at ${c.args?.startTime ?? "?"}`);
+          await sendFollowUpSms(phone, `Booked without email: ${c.args?.name ?? "lead"} at ${booked.startISO}`);
         }
         await logEvent({
-          type: "webhook.booking", actor: "webhook", leadId, callId: body?.message?.call?.id,
+          type: "meeting.booked", actor: "webhook", leadId, agentId, callId,
+          data: { startISO: booked.startISO, emailOk: r.ok, emailConfirmed: !unconfirmed },
+        });
+        await logEvent({
+          type: "webhook.booking", actor: "webhook", leadId, callId,
           ok: r.ok, ...(r.ok ? {} : { error: r.detail }),
           data: { emailConfirmed: !unconfirmed, smsFallback: r.ok && unconfirmed && !!phone },
         });
