@@ -56,6 +56,25 @@ const EMAIL_BOOKING_HE = `פרוטוקול אימייל (להזמנה ליומן
 קביעת פגישה:
 - אשר/י בקול את התאריך והשעה שסוכמו לפני הקריאה ל-book_meeting.`;
 
+// Availability guard: the slot list arrives PER-CALL via
+// assistantOverrides.variableValues.availableSlots (same LiquidJS channel as
+// {{leadEmail}}) - so the calendar is fresh on every call without re-pushing
+// the assistant. Each line embeds the exact startTime the agent must pass to
+// book_meeting verbatim, killing timezone/parsing ambiguity.
+const AVAILABILITY = `Meeting availability (the operator's live calendar):
+{{availableSlots}}
+- Offer ONLY times from the list above; never invent, accept, or confirm any other time.
+- Say times naturally out loud ("Sunday at ten in the morning") - NEVER read a startTime code aloud.
+- When calling book_meeting, pass the chosen slot's startTime value EXACTLY as written in the list.
+- If the list is empty or none of the times work for the lead, say the calendar is fully booked for now and do NOT book.`;
+
+const AVAILABILITY_HE = `זמינות לפגישות (היומן האמיתי של המפעיל):
+{{availableSlots}}
+- הצע/י אך ורק זמנים מהרשימה למעלה; לעולם אל תמציא/י, תקבל/י או תאשר/י זמן אחר.
+- אמור/אמרי את הזמנים בקול באופן טבעי - לעולם אל תקריא/י קוד startTime בקול.
+- בקריאה ל-book_meeting העבר/י את ערך ה-startTime של הזמן שנבחר בדיוק כפי שכתוב ברשימה.
+- אם הרשימה ריקה או שאף זמן לא מתאים ללקוח, אמור/אמרי שהיומן מלא כרגע ואל תקבע/י פגישה.`;
+
 // Pure prompt composition (exported for tests). booking !== false so agents
 // saved before the flag existed keep their booking behavior.
 export function composeCallPrompt(c: AssistantConfig, today: string): string {
@@ -68,7 +87,7 @@ export function composeCallPrompt(c: AssistantConfig, today: string): string {
     c.systemPrompt,
     ...(hebrew ? [HEBREW_RULES] : []),
     VOICE_CORE,
-    ...(booking ? [hebrew ? EMAIL_BOOKING_HE : EMAIL_BOOKING] : []),
+    ...(booking ? [hebrew ? EMAIL_BOOKING_HE : EMAIL_BOOKING, hebrew ? AVAILABILITY_HE : AVAILABILITY] : []),
     dateLine,
     `Qualification questions:\n${c.qualificationQuestions.map((q) => `- ${q}`).join("\n")}`,
   ].join("\n\n");
@@ -155,7 +174,7 @@ export async function upsertAssistant(config: AssistantConfig, vapiId?: string):
   return (created as { id: string }).id;
 }
 
-export async function startOutboundCall(vapiAssistantId: string, phone: string, leadId?: string, email?: string): Promise<string> {
+export async function startOutboundCall(vapiAssistantId: string, phone: string, leadId?: string, email?: string, availableSlots?: string): Promise<string> {
   const phoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
   if (!phoneNumberId) throw new Error("VAPI_PHONE_NUMBER_ID is not set (import a Twilio number in Vapi)");
   const call = await client().calls.create({
@@ -167,7 +186,7 @@ export async function startOutboundCall(vapiAssistantId: string, phone: string, 
     // template in VOICE_BASELINE (LiquidJS) - "unknown" triggers voice capture.
     assistantOverrides: {
       ...(leadId ? { metadata: { leadId } } : {}),
-      variableValues: { leadEmail: email || "unknown" },
+      variableValues: { leadEmail: email || "unknown", availableSlots: availableSlots || "No open times this week." },
     },
   } as any);
   return (call as { id: string }).id;
