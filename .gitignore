@@ -42,3 +42,4 @@ temp/
 
 # Playwright MCP scratch (verify-ui screenshots/logs)
 .playwright-mcp/
+.claude/worktrees/
