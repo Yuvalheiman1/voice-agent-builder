@@ -16,6 +16,7 @@ import ChatBuilder from "./components/ChatBuilder";
 import AgentView from "./components/AgentView";
 import CallPanel from "./components/CallPanel";
 import CallLogPanel from "./components/CallLogPanel";
+import SchedulePanel from "./components/SchedulePanel";
 
 type Toast = { msg: string; tone: "info" | "error" | "success" } | null;
 // One in-flight call we're polling. Transient (React state) - never persisted.
@@ -44,6 +45,7 @@ export default function Dashboard() {
   const [toast, setToast] = useState<Toast>(null);
   const [calling, setCalling] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [schedOpen, setSchedOpen] = useState(false);
 
   const showToast = (msg: string, tone: NonNullable<Toast>["tone"] = "info") => {
     setToast({ msg, tone });
@@ -404,6 +406,7 @@ export default function Dashboard() {
             <Button size="sm" variant="danger" onClick={stopAll}>Stop all</Button>
           )}
           <Button size="sm" variant="secondary" onClick={() => setLogOpen(true)}>Call log</Button>
+          <Button size="sm" variant="secondary" onClick={() => setSchedOpen(true)}>Schedule</Button>
         </div>
       </header>
 
@@ -647,6 +650,7 @@ export default function Dashboard() {
         />
       )}
       {logOpen && <CallLogPanel agents={agents.items} leads={leads.items} onClose={() => setLogOpen(false)} />}
+      {schedOpen && <SchedulePanel onClose={() => setSchedOpen(false)} />}
       {toast && (
         <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center px-4" aria-live="polite">
           <div className="rounded-[10px] px-4 py-2.5 text-sm" style={{

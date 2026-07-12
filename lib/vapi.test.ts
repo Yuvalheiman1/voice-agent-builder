@@ -35,6 +35,16 @@ describe("composeCallPrompt", () => {
     expect(p).toContain("spoken phone call");
     expect(p).toContain("- Team size?");
   });
+
+  it("booking agent prompt carries the availability block with the {{availableSlots}} template", () => {
+    const p = composeCallPrompt({ ...base, booking: true }, "2026-07-10");
+    expect(p).toContain("{{availableSlots}}");
+    expect(p).toContain("Offer ONLY times from the list above");
+    expect(p).toContain("EXACTLY as written");
+  });
+  it("qualify-only prompt has no availability block", () => {
+    expect(composeCallPrompt({ ...base, booking: false }, "2026-07-10")).not.toContain("{{availableSlots}}");
+  });
 });
 
 const heCfg: AssistantConfig = {
@@ -67,5 +77,11 @@ describe("hebrew agents (push-time seam)", () => {
   it("REGRESSION: english compose output is unchanged by the language field", () => {
     const { language: _l, ...legacy } = enCfg;
     expect(composeCallPrompt(enCfg, "2026-07-11")).toBe(composeCallPrompt(legacy as any, "2026-07-11"));
+  });
+  it("hebrew booking prompt uses the hebrew availability block", () => {
+    const p = composeCallPrompt(heCfg, "2026-07-11");
+    expect(p).toContain("{{availableSlots}}");
+    expect(p).toMatch(/היומן מלא/);
+    expect(p).not.toContain("Offer ONLY times from the list above");
   });
 });

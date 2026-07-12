@@ -11,7 +11,7 @@ export type Op = { method: string; args: unknown[] };
 export type Recorded = { table: string; ops: Op[] };
 
 const METHODS = [
-  "select", "order", "eq", "not", "limit", "gte",
+  "select", "order", "eq", "not", "limit", "gte", "single", "maybeSingle",
   "insert", "update", "delete", "upsert",
 ] as const;
 

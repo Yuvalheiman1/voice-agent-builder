@@ -56,3 +56,16 @@ export type CallPhase = "queued" | "ringing" | "on-call" | "analyzing" | "done" 
 
 // Live status of an agent (derived at render, never persisted).
 export type AgentStatus = "idle" | "on-call";
+
+// ── Booking / schedule ────────────────────────────────────────────────────────
+
+export type Meeting = {
+  id: string;
+  startTs: string;      // UTC ISO instant (unique - the double-booking guard)
+  leadName: string;
+  leadEmail?: string;
+  leadPhone?: string;
+  agentId?: string;
+  callId?: string;
+  createdAt: number;
+};
